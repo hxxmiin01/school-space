@@ -1,0 +1,28 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+:root {
+  font-family: "Pretendard Variable", Pretendard, "Segoe UI", system-ui, sans-serif;
+  font-size: 16px;
+  color: #1e293b;
+  background: #f8fafc;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #f8fafc;
+  color: #1e293b;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}

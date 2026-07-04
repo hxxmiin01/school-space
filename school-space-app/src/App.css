@@ -1,0 +1,147 @@
+/* 공통 레이아웃 */
+.app-shell {
+  min-height: calc(100vh - 68px);
+  background:
+    radial-gradient(1200px 420px at 8% -10%, rgba(59, 130, 246, 0.18), transparent 60%),
+    radial-gradient(900px 360px at 92% -12%, rgba(6, 182, 212, 0.16), transparent 58%),
+    linear-gradient(180deg, #f7fbff 0%, #f8fafc 45%, #f4f6fb 100%);
+}
+
+/* 네비게이션 바 */
+.navbar {
+  background: linear-gradient(95deg, #0f4ab8 0%, #1d4ed8 38%, #0369a1 100%);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  height: 68px;
+  gap: 8px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: saturate(125%);
+}
+
+.navbar-brand-wrap {
+  display: flex;
+  align-items: center;
+  margin-right: 18px;
+  gap: 9px;
+}
+
+.navbar-brand-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.navbar-brand {
+  color: #f8fbff;
+  font-weight: 800;
+  font-size: 19px;
+  text-decoration: none;
+  letter-spacing: -0.2px;
+}
+
+.navbar a {
+  color: rgba(245, 249, 255, 0.9);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background 0.18s, transform 0.18s, color 0.18s;
+}
+
+.navbar a:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.navbar-link-active {
+  background: #ffffff !important;
+  color: #0f3f9a !important;
+  box-shadow: 0 8px 18px rgba(2, 8, 23, 0.18);
+}
+
+.navbar-logout {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  padding: 8px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  transition: background 0.16s, transform 0.16s;
+}
+
+.navbar-logout:hover {
+  background: rgba(255, 255, 255, 0.24);
+  transform: translateY(-1px);
+}
+
+@media (max-width: 760px) {
+  .navbar {
+    padding: 0 12px;
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+
+  .navbar-brand-wrap {
+    margin-right: 0;
+    width: 100%;
+  }
+
+  .navbar a,
+  .navbar-logout {
+    font-size: 13px;
+    padding: 7px 12px;
+  }
+
+  .navbar-logout {
+    margin-left: 0;
+  }
+}
+
+/* 페이지 공통 */
+.page {
+  max-width: 900px;
+  margin: 32px auto;
+  padding: 0 16px;
+}
+
+.page h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 24px;
+}
+
+.page h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #334155;
+  margin-bottom: 16px;
+}
+
+/* 카드 */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  border: 1px solid #e2e8f0;
+}
