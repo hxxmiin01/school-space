@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
+import { fetchReservationsWithSource } from '../api/reservations'
 
 const STATUS_CONFIG = {
   pending:    { label: '⏳ 대기 중',   border: 'border-l-blue-400',   badge: 'bg-blue-50 text-blue-600' },
@@ -19,28 +20,35 @@ function MyPage() {
   const [classInput, setClassInput] = useState('')
   const [userName, setUserName] = useState('')
   const [editingClass, setEditingClass] = useState(false)
+  const [reservationSourceInfo, setReservationSourceInfo] = useState({ source: '', fallbackReason: null })
 
   useEffect(() => { fetchMyData() }, [])
 
   async function fetchMyData() {
-    const { data: { user } } = await supabase.auth.getUser()
-    setUserEmail(user.email)
-    setUserId(user.id)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUserEmail(user.email)
+      setUserId(user.id)
 
-    const [resResult, penResult, profileResult] = await Promise.all([
-      supabase.from('reservations').select('*, rooms(name)').eq('user_id', user.id).order('date', { ascending: false }),
-      supabase.from('penalties').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('profiles').select('class_name, name').eq('id', user.id).single(),
-    ])
+      const [resResult, penResult, profileResult] = await Promise.all([
+        fetchReservationsWithSource(user.id),
+        supabase.from('penalties').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+        supabase.from('profiles').select('class_name, name').eq('id', user.id).single(),
+      ])
 
-    if (!resResult.error) setReservations(resResult.data)
-    if (!penResult.error) setPenalties(penResult.data)
-    if (!profileResult.error) {
-      setClassName(profileResult.data?.class_name || '')
-      setClassInput(profileResult.data?.class_name || '')
-      setUserName(profileResult.data?.name || '')
+      setReservations(resResult?.reservations || [])
+      setReservationSourceInfo({ source: resResult?.source || '', fallbackReason: resResult?.fallbackReason || null })
+      if (!penResult.error) setPenalties(penResult.data)
+      if (!profileResult.error) {
+        setClassName(profileResult.data?.class_name || '')
+        setClassInput(profileResult.data?.class_name || '')
+        setUserName(profileResult.data?.name || '')
+      }
+    } catch (error) {
+      console.error('마이페이지 데이터를 불러오지 못했어요:', error)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   async function handleSaveClass() {
@@ -140,6 +148,24 @@ function MyPage() {
       {/* 예약 내역 */}
       <div className="pt-2">
         <h2 className="font-bold text-slate-800 mb-5">내 예약 내역</h2>
+        {reservationSourceInfo.source === 'azure' && (
+          <p className="mb-3 text-xs text-blue-600 font-medium">예약 목록은 Azure API(데이터 통로)에서 불러오고 있어요.</p>
+        )}
+        {reservationSourceInfo.source === 'supabase' && (
+          <p className="mb-3 text-xs text-slate-600 font-medium">예약 목록은 Supabase(기존 저장소)에서 불러오고 있어요.</p>
+        )}
+        {reservationSourceInfo.source === 'supabase-fallback' && (
+          <p className="mb-3 text-xs text-amber-600 font-medium">
+            Azure 예약 API 연결이 실패해서 Supabase로 자동 전환했어요.
+            {reservationSourceInfo.fallbackReason ? ` (${reservationSourceInfo.fallbackReason})` : ''}
+          </p>
+        )}
+        {reservationSourceInfo.source === 'supabase-no-azure-url' && (
+          <p className="mb-3 text-xs text-amber-600 font-medium">
+            Azure 주소 설정이 없어서 Supabase를 사용 중이에요.
+            {' '}VITE_AZURE_API_BASE_URL(Azure API 주소 설정값)을 .env.local에 넣으면 Azure 연결을 시도해요.
+          </p>
+        )}
         {reservations.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
             예약 내역이 없어요.

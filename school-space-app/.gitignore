@@ -15,6 +15,7 @@ dist-ssr
 # 환경 변수 파일 (비밀 키 보호)
 .env
 .env.local
+azure-api/local.settings.json
 
 # Editor directories and files
 .vscode/*

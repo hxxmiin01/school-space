@@ -1,9 +1,10 @@
+@import "@fontsource-variable/geist";
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
 :root {
-  font-family: "Pretendard Variable", Pretendard, "Segoe UI", system-ui, sans-serif;
+  font-family: "Geist Variable", "Segoe UI", system-ui, sans-serif;
   font-size: 16px;
   color: #1e293b;
   background: #f8fafc;

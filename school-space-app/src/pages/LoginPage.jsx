@@ -11,25 +11,39 @@ function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [canResendVerification, setCanResendVerification] = useState(false)
+  const trimmedEmail = email.trim()
+  const trimmedName = name.trim()
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  const isValidEmail = emailPattern.test(trimmedEmail)
+  const loginReady = trimmedEmail && password
+  const signUpReady = trimmedName && isValidEmail && password.length >= 6 && grade && classNum
 
   function switchMode(toSignUp) {
     setIsSignUp(toSignUp)
     setEmail(''); setPassword(''); setName(''); setGrade(''); setClassNum('')
     setErrorMsg('')
+    setCanResendVerification(false)
   }
 
   async function handleLogin(e) {
     e.preventDefault()
     setLoading(true)
     setErrorMsg('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setErrorMsg('로그인 실패: ' + error.message)
+    const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password })
+    if (error) {
+      setErrorMsg('로그인 실패: ' + error.message)
+    } else if (!data.user?.email_confirmed_at) {
+      await supabase.auth.signOut()
+      setErrorMsg('이메일 인증(메일함에서 링크 누르기) 후 로그인해주세요.')
+    }
     setLoading(false)
   }
 
   async function handleSignUp(e) {
     e.preventDefault()
     if (!name) { setErrorMsg('이름을 입력해주세요.'); return }
+    if (!isValidEmail) { setErrorMsg('이메일 형식이 올바르지 않아요. 예: student@school.com'); return }
     if (!grade) { setErrorMsg('학년을 선택해주세요.'); return }
     if (!classNum) { setErrorMsg('반을 선택해주세요.'); return }
     setLoading(true)
@@ -37,7 +51,7 @@ function LoginPage() {
 
     const className = `${grade}학년 ${classNum}반`
 
-    const { data, error } = await supabase.auth.signUp({ email, password })
+    const { data, error } = await supabase.auth.signUp({ email: trimmedEmail, password })
     if (error) {
       setErrorMsg('회원가입 실패: ' + error.message)
       setLoading(false)
@@ -48,7 +62,7 @@ function LoginPage() {
       const { error: profileError } = await supabase.from('profiles').insert({
         id: data.user.id,
         role: 'student',
-        name,
+        name: trimmedName,
         class_name: className,
       })
       if (profileError) {
@@ -58,9 +72,32 @@ function LoginPage() {
       }
     }
 
-    setIsSignUp(false)
-    setEmail(''); setPassword(''); setName(''); setGrade(''); setClassNum('')
-    setErrorMsg('✅ 가입이 완료됐어요! 로그인해주세요.')
+    setCanResendVerification(true)
+    setPassword('')
+    setErrorMsg(
+      data.user?.email_confirmed_at
+        ? '✅ 가입이 완료됐어요! 로그인해주세요.'
+        : '📩 가입 완료! 이메일 인증(메일함에서 링크 누르기) 후 로그인해주세요.'
+    )
+    setLoading(false)
+  }
+
+  async function handleResendVerification() {
+    if (!isValidEmail) {
+      setErrorMsg('먼저 올바른 이메일을 입력해주세요. 예: student@school.com')
+      return
+    }
+    setLoading(true)
+    setErrorMsg('')
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: trimmedEmail,
+    })
+    if (error) {
+      setErrorMsg('인증메일 재전송 실패: ' + error.message)
+    } else {
+      setErrorMsg('📩 인증메일을 다시 보냈어요. 메일함(스팸함 포함)을 확인해주세요.')
+    }
     setLoading(false)
   }
 
@@ -161,14 +198,24 @@ function LoginPage() {
           )}
           {isSignUp ? (
             <>
-              <button onClick={handleSignUp} disabled={loading}
+              <button onClick={handleSignUp} disabled={loading || !signUpReady}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 mt-1 shadow-[0_10px_22px_rgba(37,99,235,0.24)]">
                 {loading ? '처리 중...' : '회원가입 완료'}
               </button>
+              {canResendVerification && (
+                <button
+                  type="button"
+                  onClick={handleResendVerification}
+                  disabled={loading || !isValidEmail}
+                  className="w-full py-2.5 text-sm text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors disabled:opacity-50"
+                >
+                  인증메일 다시 보내기
+                </button>
+              )}
             </>
           ) : (
             <>
-              <button onClick={handleLogin} disabled={loading}
+              <button onClick={handleLogin} disabled={loading || !loginReady}
                 className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 mt-1 shadow-[0_10px_22px_rgba(37,99,235,0.24)]">
                 {loading ? '처리 중...' : '로그인'}
               </button>

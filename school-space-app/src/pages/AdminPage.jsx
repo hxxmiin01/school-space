@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
+import { fetchReservations as fetchReservationsApi } from '../api/reservations'
 
 const STATUS_CONFIG = {
   pending:    { label: '⏳ 대기 중',   badge: 'bg-blue-50 text-blue-600' },
@@ -22,13 +23,12 @@ function AdminPage() {
   useEffect(() => { fetchReservations() }, [])
 
   async function fetchReservations() {
-    const { data, error } = await supabase
-      .from('reservations')
-      .select('*, rooms(name)')
-      .order('date', { ascending: true })
-
-    if (error) { setErrorMsg('오류: ' + error.message) }
-    else { setReservations(data) }
+    try {
+      const data = await fetchReservationsApi()
+      setReservations(data || [])
+    } catch (error) {
+      setErrorMsg('오류: ' + error.message)
+    }
     setLoading(false)
   }
 
