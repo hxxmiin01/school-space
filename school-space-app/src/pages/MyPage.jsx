@@ -1,6 +1,7 @@
 ﻿import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { fetchReservationsWithSource } from '../api/reservations'
+import { trackApiCall, trackError, trackInteraction } from '../lib/telemetry'
 
 const STATUS_CONFIG = {
   pending:    { label: '⏳ 대기 중',   border: 'border-l-blue-400',   badge: 'bg-blue-50 text-blue-600' },
@@ -57,8 +58,14 @@ function MyPage() {
   }
 
   async function handleCheckIn(reservation) {
-    const { error } = await supabase.from('rooms').update({ status: 'occupied' }).eq('id', reservation.room_id)
-    if (error) { alert('입실 실패: ' + error.message) } else {
+    trackInteraction('reservation_checkin_click', { reservationId: reservation.id })
+    const { error } = await trackApiCall('rooms:update_occupied', () =>
+      supabase.from('rooms').update({ status: 'occupied' }).eq('id', reservation.room_id)
+    )
+    if (error) {
+      trackError(error, { flow: 'checkin' })
+      alert('입실 실패: ' + error.message)
+    } else {
       await supabase.from('reservations').update({ status: 'checked_in' }).eq('id', reservation.id)
       alert('입실 완료! 방이 사용 중으로 바뀌었어요.')
       fetchMyData()
@@ -66,8 +73,14 @@ function MyPage() {
   }
 
   async function handleCheckOut(reservation) {
-    const { error } = await supabase.from('rooms').update({ status: 'available' }).eq('id', reservation.room_id)
-    if (error) { alert('퇴실 실패: ' + error.message) } else {
+    trackInteraction('reservation_checkout_click', { reservationId: reservation.id })
+    const { error } = await trackApiCall('rooms:update_available', () =>
+      supabase.from('rooms').update({ status: 'available' }).eq('id', reservation.room_id)
+    )
+    if (error) {
+      trackError(error, { flow: 'checkout' })
+      alert('퇴실 실패: ' + error.message)
+    } else {
       await supabase.from('reservations').update({ status: 'completed' }).eq('id', reservation.id)
       alert('퇴실 완료! 방이 공실로 바뀌었어요.')
       fetchMyData()

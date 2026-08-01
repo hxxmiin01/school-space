@@ -30,3 +30,12 @@ yarn-error.log*
 
 # OS
 Thumbs.db
+
+# IaC (infra/) — Terraform/Bicep 중 무엇을 고르든 공통으로 무시할 산출물
+# 도구를 아직 선택하지 않았으므로 두 도구의 산출물을 모두 미리 무시해 둡니다.
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+infra/bicep/*.json.bak
+infra/**/*.tfplan

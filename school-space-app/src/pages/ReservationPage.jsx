@@ -1,6 +1,14 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
+import { createReservationCommand, submitReservationCommand } from '../api/reservations'
+
+// Makes a fresh idempotency/request key for one reservation *attempt*. Kept
+// as its own helper (instead of inlining `crypto.randomUUID()`) so the "how
+// do we identify a request" decision lives in one place.
+function createIdempotencyKey() {
+  return crypto.randomUUID()
+}
 
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
 const MINUTES = Array.from({ length: 6 }, (_, i) => String(i * 10).padStart(2, '0'))
@@ -40,6 +48,15 @@ function ReservationPage() {
   const [purpose, setPurpose] = useState('')
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  // Identifies one reservation *attempt*. A failed submit keeps this same
+  // key so resubmitting is treated as "retry this request", not a new one;
+  // a successful submit gets a fresh key for whatever the user does next.
+  const [idempotencyKey, setIdempotencyKey] = useState(createIdempotencyKey)
+  // Backstop against double submission: React state (`loading`) only
+  // disables the button after a re-render, which leaves a brief window for
+  // a fast double click or an Enter-key repeat to fire `handleSubmit` twice.
+  // A ref updates synchronously, so checking it first closes that window.
+  const isSubmittingRef = useRef(false)
   const now = new Date()
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
   const startTimePreview = combineTime(startHour, startMinute)
@@ -67,149 +84,161 @@ function ReservationPage() {
 
   async function handleSubmit(e) {
     e.preventDefault()
+
+    // Hard stop for duplicate submissions: if a submit is already running,
+    // ignore this one instead of starting a second insert.
+    if (isSubmittingRef.current) {
+      return
+    }
+    isSubmittingRef.current = true
     setLoading(true)
     setErrorMsg('')
 
-    const startTime = combineTime(startHour, startMinute)
-    const endTime = combineTime(endHour, endMinute)
+    // Everything below only ever returns through here, so the "submit in
+    // progress" lock and the loading spinner always get released — even on
+    // an early validation `return` or a thrown error.
+    try {
+      const startTime = combineTime(startHour, startMinute)
+      const endTime = combineTime(endHour, endMinute)
 
-    if (!startTime || !endTime) {
-      setErrorMsg('시작 시간과 종료 시간의 시/분을 모두 선택해주세요.')
-      setLoading(false)
-      return
-    }
-
-    // 기본 시간 검증: 시작 시간은 종료 시간보다 빨라야 함
-    if (startTime >= endTime) {
-      setErrorMsg('시작 시간은 종료 시간보다 빨라야 해요.')
-      setLoading(false)
-      return
-    }
-
-    // 기본 날짜 검증: 오늘 이전 날짜는 예약 불가
-    const selectedDate = new Date(`${date}T00:00:00`)
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    if (selectedDate < today) {
-      setErrorMsg('지난 날짜는 예약할 수 없어요. 오늘 이후 날짜를 선택해주세요.')
-      setLoading(false)
-      return
-    }
-
-    const { data: { user } } = await supabase.auth.getUser()
-
-    // 1. 패널티 10점 이상이면 예약 차단
-    const { data: penalties } = await supabase
-      .from('penalties')
-      .select('points')
-      .eq('user_id', user.id)
-    const totalPoints = penalties?.reduce((sum, p) => sum + p.points, 0) || 0
-    if (totalPoints >= 10) {
-      setErrorMsg('패널티 누적 10점으로 이용이 제한됐어요. 담당자에게 문의해주세요.')
-      setLoading(false)
-      return
-    }
-
-    // 2. 선택한 날짜의 주(월~일) 계산
-    const day = selectedDate.getDay() // 0=일, 1=월 ... 6=토
-    const monday = new Date(selectedDate)
-    monday.setDate(selectedDate.getDate() - (day === 0 ? 6 : day - 1))
-    const sunday = new Date(monday)
-    sunday.setDate(monday.getDate() + 6)
-    const toStr = (d) => d.toISOString().split('T')[0]
-
-    // 3. 같은 학급의 이번 주 예약 수 확인
-    const { data: profile } = await supabase.from('profiles').select('class_name').eq('id', user.id).single()
-    if (profile?.class_name) {
-      // 같은 학급 사용자 id 목록 가져오기
-      const { data: classmates } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('class_name', profile.class_name)
-      const classmateIds = classmates?.map(c => c.id) || []
-
-      const { data: weekReservations } = await supabase
-        .from('reservations')
-        .select('id')
-        .in('user_id', classmateIds)
-        .gte('date', toStr(monday))
-        .lte('date', toStr(sunday))
-        .neq('status', 'rejected')
-
-      if ((weekReservations?.length || 0) >= 3) {
-        setErrorMsg(`우리 반(${profile.class_name})은 이번 주에 이미 3일 이상 예약했어요. 다음 주에 다시 시도해주세요.`)
-        setLoading(false)
+      if (!startTime || !endTime) {
+        setErrorMsg('시작 시간과 종료 시간의 시/분을 모두 선택해주세요.')
         return
       }
-    }
 
-    // 4. 같은 방/같은 날짜 시간 겹침 예약 차단
-    const { data: sameRoomReservations, error: overlapFetchError } = await supabase
-      .from('reservations')
-      .select('start_time, end_time, status')
-      .eq('room_id', room.id)
-      .eq('date', date)
-      .neq('status', 'rejected')
+      // 기본 시간 검증: 시작 시간은 종료 시간보다 빨라야 함
+      if (startTime >= endTime) {
+        setErrorMsg('시작 시간은 종료 시간보다 빨라야 해요.')
+        return
+      }
 
-    if (overlapFetchError) {
-      setErrorMsg('기존 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
-      setLoading(false)
-      return
-    }
+      // 기본 날짜 검증: 오늘 이전 날짜는 예약 불가
+      const selectedDate = new Date(`${date}T00:00:00`)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (selectedDate < today) {
+        setErrorMsg('지난 날짜는 예약할 수 없어요. 오늘 이후 날짜를 선택해주세요.')
+        return
+      }
 
-    const hasOverlap = (sameRoomReservations || []).some((reservation) => {
-      const existingStart = reservation.start_time
-      const existingEnd = reservation.end_time
-      // 겹침 조건: 새 시작 < 기존 종료 && 새 종료 > 기존 시작
-      return startTime < existingEnd && endTime > existingStart
-    })
+      const { data: { user } } = await supabase.auth.getUser()
 
-    if (hasOverlap) {
-      setErrorMsg('선택한 시간에 이미 예약이 있어요. 다른 시간을 선택해주세요.')
-      setLoading(false)
-      return
-    }
+      // 1. 패널티 10점 이상이면 예약 차단
+      const { data: penalties } = await supabase
+        .from('penalties')
+        .select('points')
+        .eq('user_id', user.id)
+      const totalPoints = penalties?.reduce((sum, p) => sum + p.points, 0) || 0
+      if (totalPoints >= 10) {
+        setErrorMsg('패널티 누적 10점으로 이용이 제한됐어요. 담당자에게 문의해주세요.')
+        return
+      }
 
-    // 5. 같은 사용자/같은 날짜 시간 겹침 예약 차단 (다른 방 포함)
-    const { data: myReservations, error: myOverlapFetchError } = await supabase
-      .from('reservations')
-      .select('start_time, end_time, status')
-      .eq('user_id', user.id)
-      .eq('date', date)
-      .neq('status', 'rejected')
+      // 2. 선택한 날짜의 주(월~일) 계산
+      const day = selectedDate.getDay() // 0=일, 1=월 ... 6=토
+      const monday = new Date(selectedDate)
+      monday.setDate(selectedDate.getDate() - (day === 0 ? 6 : day - 1))
+      const sunday = new Date(monday)
+      sunday.setDate(monday.getDate() + 6)
+      const toStr = (d) => d.toISOString().split('T')[0]
 
-    if (myOverlapFetchError) {
-      setErrorMsg('내 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
-      setLoading(false)
-      return
-    }
+      // 3. 같은 학급의 이번 주 예약 수 확인
+      const { data: profile } = await supabase.from('profiles').select('class_name').eq('id', user.id).single()
+      if (profile?.class_name) {
+        // 같은 학급 사용자 id 목록 가져오기
+        const { data: classmates } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('class_name', profile.class_name)
+        const classmateIds = classmates?.map(c => c.id) || []
 
-    const hasMyOverlap = (myReservations || []).some((reservation) => {
-      const existingStart = reservation.start_time
-      const existingEnd = reservation.end_time
-      return startTime < existingEnd && endTime > existingStart
-    })
+        const { data: weekReservations } = await supabase
+          .from('reservations')
+          .select('id')
+          .in('user_id', classmateIds)
+          .gte('date', toStr(monday))
+          .lte('date', toStr(sunday))
+          .neq('status', 'rejected')
 
-    if (hasMyOverlap) {
-      setErrorMsg('내 예약 시간과 겹쳐요. 다른 시간을 선택해주세요.')
-      setLoading(false)
-      return
-    }
+        if ((weekReservations?.length || 0) >= 3) {
+          setErrorMsg(`우리 반(${profile.class_name})은 이번 주에 이미 3일 이상 예약했어요. 다음 주에 다시 시도해주세요.`)
+          return
+        }
+      }
 
-    const { error } = await supabase.from('reservations').insert({
-      room_id: room.id,
-      user_id: user.id,
-      date,
-      start_time: startTime,
-      end_time: endTime,
-      members_count: membersCount,
-      purpose,
-      status: 'pending',
-    })
+      // 4. 같은 방/같은 날짜 시간 겹침 예약 차단
+      const { data: sameRoomReservations, error: overlapFetchError } = await supabase
+        .from('reservations')
+        .select('start_time, end_time, status')
+        .eq('room_id', room.id)
+        .eq('date', date)
+        .neq('status', 'rejected')
 
-    if (error) {
-      setErrorMsg('예약 실패: ' + error.message)
-    } else {
+      if (overlapFetchError) {
+        setErrorMsg('기존 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        return
+      }
+
+      const hasOverlap = (sameRoomReservations || []).some((reservation) => {
+        const existingStart = reservation.start_time
+        const existingEnd = reservation.end_time
+        // 겹침 조건: 새 시작 < 기존 종료 && 새 종료 > 기존 시작
+        return startTime < existingEnd && endTime > existingStart
+      })
+
+      if (hasOverlap) {
+        setErrorMsg('선택한 시간에 이미 예약이 있어요. 다른 시간을 선택해주세요.')
+        return
+      }
+
+      // 5. 같은 사용자/같은 날짜 시간 겹침 예약 차단 (다른 방 포함)
+      const { data: myReservations, error: myOverlapFetchError } = await supabase
+        .from('reservations')
+        .select('start_time, end_time, status')
+        .eq('user_id', user.id)
+        .eq('date', date)
+        .neq('status', 'rejected')
+
+      if (myOverlapFetchError) {
+        setErrorMsg('내 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        return
+      }
+
+      const hasMyOverlap = (myReservations || []).some((reservation) => {
+        const existingStart = reservation.start_time
+        const existingEnd = reservation.end_time
+        return startTime < existingEnd && endTime > existingStart
+      })
+
+      if (hasMyOverlap) {
+        setErrorMsg('내 예약 시간과 겹쳐요. 다른 시간을 선택해주세요.')
+        return
+      }
+
+      // Single centralized write path: build the canonical reservation
+      // command (carrying this attempt's idempotency key) and hand it to
+      // the one function that knows how to submit it. See
+      // `src/api/reservations.js` for why the shape and the key live there.
+      const command = createReservationCommand({
+        room,
+        userId: user.id,
+        date,
+        startTime,
+        endTime,
+        membersCount,
+        purpose,
+        idempotencyKey,
+      })
+
+      try {
+        await submitReservationCommand(command)
+      } catch (error) {
+        setErrorMsg('예약 실패: ' + error.message)
+        // Keep the same idempotencyKey so pressing "예약 신청하기" again is
+        // treated as retrying this same request, not a brand-new one.
+        return
+      }
+
       setDate('')
       setStartHour('')
       setStartMinute('')
@@ -217,10 +246,15 @@ function ReservationPage() {
       setEndMinute('')
       setMembersCount(1)
       setPurpose('')
+      // This attempt succeeded — the next submission (if any) is a new
+      // request, so it gets its own fresh idempotency key.
+      setIdempotencyKey(createIdempotencyKey())
       alert('예약 신청이 완료됐어요! 담당자 승인을 기다려주세요.')
       navigate('/')
+    } finally {
+      isSubmittingRef.current = false
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -387,7 +421,9 @@ function ReservationPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-60"
+              aria-disabled={loading}
+              aria-busy={loading}
+              className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading ? '처리 중...' : '예약 신청하기'}
             </button>

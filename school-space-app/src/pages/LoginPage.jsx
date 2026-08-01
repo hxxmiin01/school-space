@@ -1,5 +1,6 @@
 ﻿import { useState } from 'react'
 import { supabase } from '../supabaseClient'
+import { trackApiCall, trackError, trackInteraction } from '../lib/telemetry'
 
 function LoginPage() {
   const [isSignUp, setIsSignUp] = useState(false)
@@ -28,10 +29,14 @@ function LoginPage() {
 
   async function handleLogin(e) {
     e.preventDefault()
+    trackInteraction('login_submit')
     setLoading(true)
     setErrorMsg('')
-    const { data, error } = await supabase.auth.signInWithPassword({ email: trimmedEmail, password })
+    const { data, error } = await trackApiCall('auth:signInWithPassword', () =>
+      supabase.auth.signInWithPassword({ email: trimmedEmail, password })
+    )
     if (error) {
+      trackError(error, { flow: 'login' })
       setErrorMsg('로그인 실패: ' + error.message)
     } else if (!data.user?.email_confirmed_at) {
       await supabase.auth.signOut()
@@ -42,6 +47,7 @@ function LoginPage() {
 
   async function handleSignUp(e) {
     e.preventDefault()
+    trackInteraction('signup_submit')
     if (!name) { setErrorMsg('이름을 입력해주세요.'); return }
     if (!isValidEmail) { setErrorMsg('이메일 형식이 올바르지 않아요. 예: student@school.com'); return }
     if (!grade) { setErrorMsg('학년을 선택해주세요.'); return }
@@ -51,21 +57,27 @@ function LoginPage() {
 
     const className = `${grade}학년 ${classNum}반`
 
-    const { data, error } = await supabase.auth.signUp({ email: trimmedEmail, password })
+    const { data, error } = await trackApiCall('auth:signUp', () =>
+      supabase.auth.signUp({ email: trimmedEmail, password })
+    )
     if (error) {
+      trackError(error, { flow: 'signup' })
       setErrorMsg('회원가입 실패: ' + error.message)
       setLoading(false)
       return
     }
 
     if (data.user) {
-      const { error: profileError } = await supabase.from('profiles').insert({
-        id: data.user.id,
-        role: 'student',
-        name: trimmedName,
-        class_name: className,
-      })
+      const { error: profileError } = await trackApiCall('profiles:insert', () =>
+        supabase.from('profiles').insert({
+          id: data.user.id,
+          role: 'student',
+          name: trimmedName,
+          class_name: className,
+        })
+      )
       if (profileError) {
+        trackError(profileError, { flow: 'signup_profile' })
         setErrorMsg('프로필 저장 실패: ' + profileError.message)
         setLoading(false)
         return
