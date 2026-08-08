@@ -34,11 +34,21 @@ module.exports = async function (context, req) {
   }
 
   try {
-    // 대화 이력을 OpenAI 형식으로 변환
-    const messages = []
+    // Foundry Responses API 형식으로 요청 준비
+    // (표준 OpenAI chat completions와는 다름)
+    
+    // 이전 대화 이력을 문맥으로 포함
+    let conversationContext = ''
+    for (const turn of history) {
+      if (turn.role === 'user') {
+        conversationContext += `사용자: ${turn.text}\n`
+      } else if (turn.role === 'assistant') {
+        conversationContext += `도우미: ${turn.text}\n`
+      }
+    }
 
-    // 시스템 프롬프트 추가
-    const systemPrompt = `당신은 학교 스터디룸 예약 도우미입니다.
+    // 시스템 프롬프트 + 대화 이력 + 현재 메시지
+    const fullPrompt = `당신은 학교 스터디룸 예약 도우미입니다.
 
 역할:
 - 학생들이 스터디룸을 쉽게 예약하도록 돕는다
@@ -62,31 +72,9 @@ module.exports = async function (context, req) {
 4. 예약 전에 사용자의 패널티 상태를 확인한다
 5. 예약 후 담당자 승인을 기다려야 함을 알려준다
 
-예약 관련:
-- "내일 3시부터 2시간 예약해줘"라는 요청 → "좋아요! 내일 몇 월 몇 일인지 확인하고, 몇 명이 사용할건지, 뭘 할 건지 알려줘"
-- "내가 예약할 수 있어?"라는 질문 → "최근 패널티가 없으면 예약 가능합니다"
-- "방이 비어있어?"라는 질문 → "특정 날짜와 시간을 말씀해주면 확인해드릴게요"`
+${conversationContext}사용자: ${message}`
 
-    messages.push({
-      role: 'system',
-      content: systemPrompt,
-    })
-    for (const turn of history) {
-      if (turn.role === 'user' || turn.role === 'assistant') {
-        messages.push({
-          role: turn.role,
-          content: turn.text,
-        })
-      }
-    }
-    
-    // 현재 메시지 추가
-    messages.push({
-      role: 'user',
-      content: message,
-    })
-
-    // Foundry API 호출
+    // Foundry API 호출 (Responses API 형식)
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -94,10 +82,8 @@ module.exports = async function (context, req) {
         'api-key': apiKey,
       },
       body: JSON.stringify({
-        messages,
+        input: fullPrompt,
         model,
-        temperature: 0.7,
-        max_tokens: 500,
       }),
     })
 
@@ -115,13 +101,28 @@ module.exports = async function (context, req) {
 
     const data = await response.json()
 
-    // 응답 처리 (OpenAI 호환 형식)
+    // 응답 처리 (Responses API 형식)
+    // output[0].content[0].text에 텍스트가 있음
     let reply = ''
-    if (data.choices && data.choices.length > 0) {
+    
+    if (typeof data === 'string') {
+      reply = data
+    } else if (data.output && Array.isArray(data.output) && data.output.length > 0) {
+      // Responses API 형식: output[0].content[0].text
+      const outputContent = data.output[0].content
+      if (Array.isArray(outputContent) && outputContent.length > 0) {
+        reply = outputContent[0].text
+      }
+    } else if (data.output && typeof data.output === 'string') {
+      reply = data.output
+    } else if (data.choices && data.choices.length > 0) {
+      // OpenAI 형식 (호환성)
       const choice = data.choices[0]
       reply =
         (choice.message && choice.message.content) ||
         (typeof choice.text === 'string' ? choice.text : '')
+    } else if (data.result) {
+      reply = data.result
     }
 
     if (!reply) {
