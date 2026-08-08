@@ -17,16 +17,40 @@ function handleAssistantRequest(body) {
 
   console.log(`📨 사용자 메시지: "${message}"`)
 
-  // 사용자 요청에서 예약 정보 추출
+  // 실제 예약 행동을 나타내는 키워드 (명령형, 요청형)
+  const isActionReservation = /예약해줄|예약해달라|예약해주|예약하고|예약하기|예약을 부탁|예약 부탁/i.test(message)
+  
+  // 정보 질문 패턴 (공실/가능 여부 확인)
+  const isInfoQuestion = /가능|있나|있어|어디|어느|빈|공실|비어|상태|현황|확인|알려/i.test(message)
+  
+  // 필수 정보 추출
   const dateMatch = message.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일|(\d{1,2})월\s*(\d{1,2})일/)
   const timeMatch = message.match(/(\d{1,2}):?(\d{2})?시/)
   const endTimeMatch = message.match(/(\d{1,2}):?(\d{2})?시.*?(\d{1,2}):?(\d{2})?시/)
   const membersMatch = message.match(/(\d+)명/)
 
+  // 정보 질문인 경우 (예약 명령이 없으면서 정보를 원하는 경우)
+  if (isInfoQuestion && !isActionReservation) {
+    console.log(`ℹ️  공실 확인 질문입니다.`)
+    return '지금 스터디룸 4개(A, B, C, D)가 모두 공실입니다! 공간 현황 화면에서 원하는 방을 클릭하면 바로 예약할 수 있어요.'
+  }
+
+  // 예약도 정보도 아닌 기타 질문인 경우
+  if (!isActionReservation && !isInfoQuestion) {
+    console.log(`ℹ️  기타 질문입니다.`)
+    return '무엇을 도와드릴까요? 공간 현황을 확인하거나 예약을 하고 싶으시다면 알려주세요!'
+  }
+
+  // 예약 요청인데 필수 정보(날짜 또는 시간)가 없으면 물어보기
+  if (isActionReservation && !dateMatch && !timeMatch) {
+    console.log(`⚠️  예약 정보가 불완전합니다.`)
+    return '언제 예약하고 싶으신가요? 예를 들어 "12월 15일 14시부터 16시까지"라고 말씀해주세요!'
+  }
+
   // 예약 정보 구성
   let year = new Date().getFullYear()
-  let month = '12'
-  let day = '15'
+  let month = new Date().getMonth() + 1
+  let day = new Date().getDate()
   let startTime = '14:00'
   let endTime = '16:00'
   let members = 3
