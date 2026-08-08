@@ -67,13 +67,32 @@ function handleAssistantRequest(body) {
   
   // "오전/오후" 시간 파싱 - "까지", "부터" 등의 입자를 무시
   const pmAmMatches = allUserMessages.match(/(오전|오후)\s*(\d{1,2})\s*시/g) || []
+  
+  // 분 단위 추출 (반, 분, 콜론)
+  const minutesMatches = allUserMessages.match(/(\d{1,2})시\s*반|(\d{1,2})시\s*(\d{1,2})분|(\d{1,2}):(\d{2})/g) || []
+  
   const membersMatch = allUserMessages.match(/(\d+)명/)
   const purposeMatch = allUserMessages.match(/목적.*?[:：]\s*([^\n]+)|사용.*?[:：]\s*([^\n]+)|과제|공부|스터디|프로젝트|회의|발표|준비/)
+
+  // 분 추출 헬퍼 함수
+  function extractMinutes(timeString) {
+    if (!timeString) return 0
+    // "2시 반" → 30
+    if (timeString.includes('반')) return 30
+    // "2시 30분" → 30
+    const minutesMatch = timeString.match(/(\d{1,2})분/)
+    if (minutesMatch) return parseInt(minutesMatch[1])
+    // "14:30" → 30
+    const colonMatch = timeString.match(/:(\d{2})/)
+    if (colonMatch) return parseInt(colonMatch[1])
+    return 0
+  }
 
   // 디버그 로그
   console.log(`📋 정규식 결과:`)
   console.log(`   pmAmMatches: ${JSON.stringify(pmAmMatches)}`)
   console.log(`   timeMatches: ${JSON.stringify(timeMatches)}`)
+  console.log(`   minutesMatches: ${JSON.stringify(minutesMatches)}`)
 
   // 날짜 추출
   let year = new Date().getFullYear()
@@ -98,7 +117,7 @@ function handleAssistantRequest(body) {
   // 1순위: "오후 1시", "오전 10시" 형식 (오전/오후 포함) - 가장 먼저 확인!
   if (pmAmMatches.length > 0) {
     console.log(`✓ 1순위 (pmAmMatches) 실행됨. pmAmMatches.length = ${pmAmMatches.length}`)
-    const times = pmAmMatches.map(match => {
+    const times = pmAmMatches.map((match, idx) => {
       // match = "오후 2시" 또는 "오후2시"
       const pmAmMatch = match.match(/(오전|오후)/)
       const hourMatch = match.match(/(\d{1,2})/)
@@ -115,15 +134,27 @@ function handleAssistantRequest(body) {
         adjustedHour = 0
       }
       
-      return adjustedHour
+      // 분 추출: pmAmMatches와 대응하는 minutesMatches에서 가져오기
+      let minutes = 0
+      if (idx < minutesMatches.length) {
+        minutes = extractMinutes(minutesMatches[idx])
+      } else if (allUserMessages.includes(match)) {
+        // minutesMatches가 없으면 match 문자열 근처에서 분을 찾기
+        const regex = new RegExp(match.replace(/\s+/g, '\\s*') + '\\s*(반|\\d{1,2}분|:\\d{2})?')
+        const fullMatch = allUserMessages.match(regex)
+        if (fullMatch) {
+          minutes = extractMinutes(fullMatch[0])
+        }
+      }
+      
+      return { hour: adjustedHour, minutes }
     }).filter(t => t !== null)
     
     if (times.length >= 2) {
-      startTime = `${String(times[0]).padStart(2, '0')}:00`
-      endTime = `${String(times[1]).padStart(2, '0')}:00`
+      startTime = `${String(times[0].hour).padStart(2, '0')}:${String(times[0].minutes).padStart(2, '0')}`
+      endTime = `${String(times[1].hour).padStart(2, '0')}:${String(times[1].minutes).padStart(2, '0')}`
     } else if (times.length === 1 && timeMatches.length >= 2) {
-      // "오후 2시부터 4시까지" 형식: pmAmMatches = ["오후 2시"], timeMatches = ["2시", "4시"]
-      // 마지막 pmAm을 기반으로 추가 시간 처리
+      // "오후 2시부터 4시까지" 또는 "오후 2시 반부터 4시 15분까지" 형식
       const lastPmAmMatch = pmAmMatches[pmAmMatches.length - 1].match(/(오전|오후)/)
       const lastPmAm = lastPmAmMatch[1]
       
@@ -133,11 +164,11 @@ function handleAssistantRequest(body) {
         return match ? parseInt(match[1]) : NaN
       }).filter(h => !isNaN(h))
       
-      // 첫 번째는 이미 pmAmMatches에서 처리됨
-      // 두 번째부터는 같은 오전/오후로 처리
       if (additionalHours.length >= 2) {
         let startHour = additionalHours[0]
         let endHour = additionalHours[1]
+        let startMinutes = times[0].minutes
+        let endMinutes = extractMinutes(timeMatches[1] || '') // 두 번째 시간의 분
         
         // 오전/오후 적용
         if (lastPmAm === '오후' && startHour < 12) {
@@ -152,15 +183,15 @@ function handleAssistantRequest(body) {
           endHour = 0
         }
         
-        startTime = `${String(startHour).padStart(2, '0')}:00`
-        endTime = `${String(endHour).padStart(2, '0')}:00`
+        startTime = `${String(startHour).padStart(2, '0')}:${String(startMinutes).padStart(2, '0')}`
+        endTime = `${String(endHour).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`
       } else {
-        startTime = `${String(times[0]).padStart(2, '0')}:00`
+        startTime = `${String(times[0].hour).padStart(2, '0')}:${String(times[0].minutes).padStart(2, '0')}`
         endTime = null
       }
     } else if (times.length === 1) {
       // 한 개의 오전/오후 시간만 있는 경우 → 아직 종료 시간 미입력
-      startTime = `${String(times[0]).padStart(2, '0')}:00`
+      startTime = `${String(times[0].hour).padStart(2, '0')}:${String(times[0].minutes).padStart(2, '0')}`
       endTime = null
     }
   }
@@ -168,63 +199,45 @@ function handleAssistantRequest(body) {
   else if (startEndTimeMatch) {
     console.log(`✓ 2순위 (startEndTimeMatch) 실행됨: ${startEndTimeMatch}`)
     const startHour = String(startEndTimeMatch[1]).padStart(2, '0')
+    const startMinute = startEndTimeMatch[2] ? String(startEndTimeMatch[2]).padStart(2, '0') : '00'
     const endHour = String(startEndTimeMatch[3]).padStart(2, '0')
-    startTime = `${startHour}:00`
-    endTime = `${endHour}:00`
+    const endMinute = startEndTimeMatch[4] ? String(startEndTimeMatch[4]).padStart(2, '0') : '00'
+    
+    startTime = `${startHour}:${startMinute}`
+    endTime = `${endHour}:${endMinute}`
     console.log(`✓ 2순위 (startEndTimeMatch) 실행됨: ${startTime} ~ ${endTime}`)
   } 
-  // 3순위: "14시 16시" 형식 (숫자만)
+  // 3순위: "14시 16시" 형식 (숫자만, 오전/오후 없음)
   else if (timeMatches.length >= 2) {
     console.log(`✓ 3순위 (timeMatches >= 2) 실행됨. timeMatches.length = ${timeMatches.length}`)
-    const times = pmAmMatches.map(match => {
-      // match = "오후 2시" 또는 "오후2시"
-      const pmAmMatch = match.match(/(오전|오후)/)
-      const hourMatch = match.match(/(\d{1,2})/)
+    const times = timeMatches.map((t, idx) => {
+      const match = t.match(/(\d{1,2})/)
+      const hour = match ? parseInt(match[1]) : NaN
       
-      if (!pmAmMatch || !hourMatch) return null
-      
-      const pmAm = pmAmMatch[1]
-      const hour = parseInt(hourMatch[1])
-      let adjustedHour = hour
-      
-      if (pmAm === '오후' && hour < 12) {
-        adjustedHour = hour + 12
-      } else if (pmAm === '오전' && hour === 12) {
-        adjustedHour = 0
+      // 분 추출
+      let minutes = 0
+      if (idx < minutesMatches.length) {
+        minutes = extractMinutes(minutesMatches[idx])
+      } else if (t) {
+        minutes = extractMinutes(t)
       }
       
-      return adjustedHour
+      return !isNaN(hour) ? { hour, minutes } : null
     }).filter(t => t !== null)
     
     if (times.length >= 2) {
-      startTime = `${String(times[0]).padStart(2, '0')}:00`
-      endTime = `${String(times[1]).padStart(2, '0')}:00`
-    } else if (times.length === 1) {
-      // 한 개의 오전/오후 시간만 있는 경우 → 아직 종료 시간 미입력
-      startTime = `${String(times[0]).padStart(2, '0')}:00`
-      endTime = null
-    }
-  } 
-  // 3순위: "14시 16시" 형식 (숫자만)
-  else if (timeMatches.length >= 2) {
-    console.log(`✓ 3순위 (timeMatches >= 2) 실행됨. timeMatches.length = ${timeMatches.length}`)
-    const hours = timeMatches.map(t => {
-      // t는 "14시" 형태이므로 숫자만 추출
-      const match = t.match(/(\d{1,2})/)
-      return match ? parseInt(match[1]) : NaN
-    }).filter(h => !isNaN(h))
-    
-    if (hours.length >= 2) {
-      startTime = `${String(hours[0]).padStart(2, '0')}:00`
-      endTime = `${String(hours[1]).padStart(2, '0')}:00`
+      startTime = `${String(times[0].hour).padStart(2, '0')}:${String(times[0].minutes).padStart(2, '0')}`
+      endTime = `${String(times[1].hour).padStart(2, '0')}:${String(times[1].minutes).padStart(2, '0')}`
     }
   } 
   // 4순위: "14시" 한 개만 (시작 시간만)
   else if (timeMatches.length === 1) {
+    console.log(`✓ 4순위 (timeMatches === 1) 실행됨`)
     const match = timeMatches[0].match(/(\d{1,2})/)
     if (match) {
       const hour = parseInt(match[1])
-      startTime = `${String(hour).padStart(2, '0')}:00`
+      const minutes = extractMinutes(timeMatches[0])
+      startTime = `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
       endTime = null
     }
   }
