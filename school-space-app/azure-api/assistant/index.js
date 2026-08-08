@@ -52,25 +52,41 @@ module.exports = async function (context, req) {
 
 역할:
 - 학생들이 스터디룸을 쉽게 예약하도록 돕는다
-- 예약 가능한 시간을 확인해주고 예약을 대신 진행한다
+- 예약 정보를 수집하고 자동으로 예약을 진행한다
 - 친절하고 이해하기 쉬운 한국어로 답변한다
 
 현재 시스템:
-- 학교에 스터디룸 4개가 있다 (Room A, Room B, Room C, Room D)
+- 학교에 스터디룸 4개가 있다 (study-room-1, study-room-2, study-room-3, study-room-4)
 - 한 번에 1시간 ~ 3시간 단위로 예약 가능하다
 - 예약은 담당자 승인 후 사용 가능하다
+- 시간: 09:00 ~ 18:00
 
 패널티 시스템:
 - 룸 정리 미흡 또는 물품 훼손 시 1~10점 패널티
 - 누적 10점이 되면 1주일간 예약 불가능
-- 최근 7일 내 패널티를 확인해준다
 
-답변 가이드:
-1. 사용자의 의도를 먼저 파악한다
-2. 구체적으로 도움을 준다 (시간, 날짜, 인원 수 등)
-3. 확실하지 않은 것은 물어본다
-4. 예약 전에 사용자의 패널티 상태를 확인한다
-5. 예약 후 담당자 승인을 기다려야 함을 알려준다
+예약 정보 수집:
+사용자가 예약을 요청하면 다음 정보를 수집한다:
+- 날짜: YYYY-MM-DD 형식
+- 시작 시간: HH:00 형식 (09:00 ~ 18:00)
+- 종료 시간: HH:00 형식
+- 인원 수: 숫자
+- 사용 목적: 한두 문장으로 설명
+
+예약 처리:
+1. 정보가 불충분하면 친절하게 물어본다
+2. 정보가 완전하면 다음 JSON으로 응답한다 (다른 텍스트 없이 JSON만):
+   {
+     "action": "make_reservation",
+     "date": "YYYY-MM-DD",
+     "start_time": "HH:00",
+     "end_time": "HH:00",
+     "members_count": 숫자,
+     "purpose": "사용 목적",
+     "room_id": "study-room-1"
+   }
+3. JSON 응답이 아닌 경우는 일반 한국어로 답변한다
+4. 예약 완료 후 확인 메시지를 친절하게 전달한다
 
 ${conversationContext}사용자: ${message}`
 
@@ -132,6 +148,49 @@ ${conversationContext}사용자: ${message}`
         body: { error: 'Foundry API에서 유효한 응답을 받지 못했습니다.' },
       }
       return
+    }
+
+    // AI 응답이 JSON 형식의 예약 요청인지 확인
+    let reservationData = null
+    try {
+      const parsed = JSON.parse(reply)
+      if (parsed.action === 'make_reservation') {
+        reservationData = parsed
+      }
+    } catch (e) {
+      // JSON 파싱 실패 - 그냥 일반 텍스트 응답으로 처리
+    }
+
+    // 예약 JSON이면 실제로 /api/reserve 호출
+    if (reservationData) {
+      try {
+        // Azure Functions 기본 URL (로컬: localhost:7071, 프로덕션: Azure Functions URL)
+        const basePath = process.env.AZURE_FUNCTIONS_BASE_URL || 'http://localhost:7071'
+        const reserveUrl = `${basePath}/api/reserve`
+
+        const reserveResponse = await fetch(reserveUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: reservationData.date,
+            start_time: reservationData.start_time,
+            end_time: reservationData.end_time,
+            members_count: reservationData.members_count,
+            purpose: reservationData.purpose,
+            room_id: reservationData.room_id,
+          }),
+        })
+
+        if (reserveResponse.ok) {
+          const reserveResult = await reserveResponse.json()
+          reply = `✅ 예약이 완료되었습니다!\n\n예약 번호: #${reserveResult.reservationId}\n날짜: ${reservationData.date}\n시간: ${reservationData.start_time} ~ ${reservationData.end_time}\n인원: ${reservationData.members_count}명\n\n상태: 담당자 승인 대기 중입니다. 승인 후 입실 버튼이 활성화됩니다.`
+        } else {
+          const errorData = await reserveResponse.json()
+          reply = `⚠️ 예약 중 문제가 발생했습니다.\n\n이유: ${errorData.error || '알 수 없는 오류'}\n\n다시 시도하거나 담당자에게 문의해주세요.`
+        }
+      } catch (reserveError) {
+        reply = `❌ 예약 시스템 오류: ${reserveError.message}\n\n잠시 후 다시 시도해주세요.`
+      }
     }
 
     context.res = {
