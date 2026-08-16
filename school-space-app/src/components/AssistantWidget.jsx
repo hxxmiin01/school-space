@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { supabase } from '../supabaseClient'
 import { askAssistant } from '../api/assistant'
 
 /**
@@ -33,6 +34,7 @@ function reasonToMessage(reason) {
 
 export default function AssistantWidget() {
   const [open, setOpen] = useState(false)
+  const [userId, setUserId] = useState('')
   const [messages, setMessages] = useState([
     { role: 'assistant', text: '안녕하세요! 예약이나 공간 현황이 궁금하면 물어보세요 🙂' },
   ])
@@ -46,6 +48,12 @@ export default function AssistantWidget() {
     }
   }, [messages, open])
 
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUserId(user?.id || '')
+    })
+  }, [])
+
   async function sendMessage(rawText) {
     const trimmed = rawText.trim()
     if (!trimmed || loading) return
@@ -58,7 +66,7 @@ export default function AssistantWidget() {
     setInput('')
     setLoading(true)
 
-    const result = await askAssistant(trimmed, history)
+    const result = await askAssistant(trimmed, history, { userId })
 
     setMessages((prev) => [
       ...prev,

@@ -20,6 +20,14 @@ function LoginPage() {
   const loginReady = trimmedEmail && password
   const signUpReady = trimmedName && isValidEmail && password.length >= 6 && grade && classNum
 
+  function toFriendlyAuthError(error, actionLabel) {
+    const rawMessage = String(error?.message || '')
+    if (rawMessage.includes('Failed to fetch')) {
+      return `${actionLabel} 실패: 인증 서버에 연결하지 못했어요. .env의 VITE_SUPABASE_URL 주소가 올바른지 확인해주세요.`
+    }
+    return `${actionLabel} 실패: ${rawMessage || '알 수 없는 오류가 발생했어요.'}`
+  }
+
   function switchMode(toSignUp) {
     setIsSignUp(toSignUp)
     setEmail(''); setPassword(''); setName(''); setGrade(''); setClassNum('')
@@ -37,7 +45,7 @@ function LoginPage() {
     )
     if (error) {
       trackError(error, { flow: 'login' })
-      setErrorMsg('로그인 실패: ' + error.message)
+      setErrorMsg(toFriendlyAuthError(error, '로그인'))
     } else if (!data.user?.email_confirmed_at) {
       await supabase.auth.signOut()
       setErrorMsg('이메일 인증(메일함에서 링크 누르기) 후 로그인해주세요.')
@@ -62,7 +70,7 @@ function LoginPage() {
     )
     if (error) {
       trackError(error, { flow: 'signup' })
-      setErrorMsg('회원가입 실패: ' + error.message)
+      setErrorMsg(toFriendlyAuthError(error, '회원가입'))
       setLoading(false)
       return
     }
@@ -106,7 +114,7 @@ function LoginPage() {
       email: trimmedEmail,
     })
     if (error) {
-      setErrorMsg('인증메일 재전송 실패: ' + error.message)
+      setErrorMsg(toFriendlyAuthError(error, '인증메일 재전송'))
     } else {
       setErrorMsg('📩 인증메일을 다시 보냈어요. 메일함(스팸함 포함)을 확인해주세요.')
     }

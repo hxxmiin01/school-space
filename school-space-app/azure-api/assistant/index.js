@@ -47,6 +47,35 @@ module.exports = async function (context, req) {
       }
     }
 
+    const assistantMessages = history
+      .filter((turn) => turn.role === 'assistant')
+      .map((turn) => turn.text || '')
+
+    const lastAssistantMessage = assistantMessages[assistantMessages.length - 1] || ''
+    const awaitingRoom = /어느\s*방을\s*예약하시겠어요|예약할\s*방\s*정보가\s*필요|예약\s*할\s*방이\s*필요/i.test(lastAssistantMessage)
+    const awaitingStartTime = /시작\s*시간을\s*알려주세요|현재\s*시각\s*이후의\s*시작\s*시간을\s*입력해주세요/i.test(lastAssistantMessage)
+    const awaitingEndTime = /몇\s*시.*까지\s*사용할\s*거예요|종료\s*시간을\s*다시\s*입력해주세요|부터\s*시작하시는군요/i.test(lastAssistantMessage)
+    const awaitingMembers = /몇\s*명이서\s*사용할\s*거예요/i.test(lastAssistantMessage)
+    const awaitingPurpose = /사용\s*목적/i.test(lastAssistantMessage)
+    const awaitingConfirmation = /예약 정보를 확인해주세요\./.test(lastAssistantMessage)
+
+    let reservationStateHint = ''
+    if (awaitingRoom) {
+      reservationStateHint = '현재 단계: 방 선택 대기. 이미 받은 시간/인원/목적이 있어도 방 질문만 다시 한다.'
+    } else if (awaitingStartTime) {
+      reservationStateHint = '현재 단계: 시작 시간 대기. 사용자가 단독 시간만 보내면 그 값을 시작 시간으로 받아들인다.'
+    } else if (awaitingEndTime) {
+      reservationStateHint = '현재 단계: 종료 시간 수정 대기. 사용자가 "오후 7시"처럼 단독 시간을 보내면 그것을 종료 시간으로 한 번만 반영하고 같은 종료 시간 질문을 반복하지 않는다. 이미 알고 있는 시작 시간과 비교할 때만 종료 시간이 더 늦은지 확인한다.'
+    } else if (awaitingMembers) {
+      reservationStateHint = '현재 단계: 인원 대기. 숫자나 "3명" 같은 단답을 그대로 인원 수로 받는다.'
+    } else if (awaitingPurpose) {
+      reservationStateHint = '현재 단계: 사용 목적 대기. 예시 단어만 허용하지 말고 "공부", "발표 준비", "조별과제"처럼 자연스러운 문장을 그대로 받는다.'
+    } else if (awaitingConfirmation) {
+      reservationStateHint = '현재 단계: 예약 확인 대기. 새 정보를 다시 묻지 말고 예/아니요만 받는다.'
+    }
+
+    const timeReplyRule = '시간 응답 규칙: 사용자가 "오후 7시"라고 하면 19:00으로 이해한다. 종료 시간 수정 단계에서는 단일 시간 답변을 다시 질문하지 말고, 방금 받은 값을 종료 시간으로 확정한 뒤 다음 누락 정보로 넘어간다.'
+
     // 시스템 프롬프트 + 대화 이력 + 현재 메시지
     const fullPrompt = `당신은 학교 스터디룸 예약 도우미입니다.
 
@@ -87,6 +116,12 @@ module.exports = async function (context, req) {
    }
 3. JSON 응답이 아닌 경우는 일반 한국어로 답변한다
 4. 예약 완료 후 확인 메시지를 친절하게 전달한다
+
+추가 규칙:
+- ${reservationStateHint || '현재 예약 단계를 대화 이력으로 추론하고, 이미 받은 정보는 다시 묻지 않는다.'}
+- ${timeReplyRule}
+- 종료 시간은 시작 시간보다 늦어야 하지만, 사용자가 수정 답변을 보냈다면 그 시간 값을 먼저 반영하고 나서만 검증한다.
+- 같은 질문을 연속해서 반복하지 말고, 방금 받은 답이 어느 칸에 들어가는지 먼저 판단한다.
 
 ${conversationContext}사용자: ${message}`
 

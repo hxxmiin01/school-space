@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { fetchReservationsWithSource } from '../api/reservations'
+import { fetchReservationsWithSource, updateReservationStatus, updateReservationSurveyDone, updateRoomStatus } from '../api/reservations'
 import { trackApiCall, trackError, trackInteraction } from '../lib/telemetry'
 
 const STATUS_CONFIG = {
@@ -23,6 +23,20 @@ function MyPage() {
   const [editingClass, setEditingClass] = useState(false)
   const [reservationSourceInfo, setReservationSourceInfo] = useState({ source: '', fallbackReason: null })
 
+  function getSurveyDoneMap() {
+    try {
+      return JSON.parse(localStorage.getItem('survey_done_map') || '{}')
+    } catch {
+      return {}
+    }
+  }
+
+  function setSurveyDoneFlag(reservationId, value) {
+    const currentMap = getSurveyDoneMap()
+    currentMap[String(reservationId)] = Boolean(value)
+    localStorage.setItem('survey_done_map', JSON.stringify(currentMap))
+  }
+
   useEffect(() => { fetchMyData() }, [])
 
   async function fetchMyData() {
@@ -37,7 +51,17 @@ function MyPage() {
         supabase.from('profiles').select('class_name, name').eq('id', user.id).single(),
       ])
 
-      setReservations(resResult?.reservations || [])
+      const surveyDoneMap = getSurveyDoneMap()
+      const mergedReservations = (resResult?.reservations || []).map((reservation) => {
+        const storedSurveyDone = surveyDoneMap[String(reservation.id)]
+        if (storedSurveyDone === undefined) {
+          return reservation
+        }
+
+        return { ...reservation, survey_done: Boolean(storedSurveyDone) }
+      })
+
+      setReservations(mergedReservations)
       setReservationSourceInfo({ source: resResult?.source || '', fallbackReason: resResult?.fallbackReason || null })
       if (!penResult.error) setPenalties(penResult.data)
       if (!profileResult.error) {
@@ -59,37 +83,48 @@ function MyPage() {
 
   async function handleCheckIn(reservation) {
     trackInteraction('reservation_checkin_click', { reservationId: reservation.id })
-    const { error } = await trackApiCall('rooms:update_occupied', () =>
-      supabase.from('rooms').update({ status: 'occupied' }).eq('id', reservation.room_id)
-    )
-    if (error) {
-      trackError(error, { flow: 'checkin' })
-      alert('입실 실패: ' + error.message)
-    } else {
-      await supabase.from('reservations').update({ status: 'checked_in' }).eq('id', reservation.id)
+    try {
+      await trackApiCall('rooms:update_occupied', () => updateRoomStatus(reservation.room_id, 'occupied'))
+      await updateReservationStatus(reservation.id, 'checked_in')
       alert('입실 완료! 방이 사용 중으로 바뀌었어요.')
       fetchMyData()
+    } catch (error) {
+      trackError(error, { flow: 'checkin' })
+      alert('입실 실패: ' + error.message)
     }
   }
 
   async function handleCheckOut(reservation) {
     trackInteraction('reservation_checkout_click', { reservationId: reservation.id })
-    const { error } = await trackApiCall('rooms:update_available', () =>
-      supabase.from('rooms').update({ status: 'available' }).eq('id', reservation.room_id)
-    )
-    if (error) {
-      trackError(error, { flow: 'checkout' })
-      alert('퇴실 실패: ' + error.message)
-    } else {
-      await supabase.from('reservations').update({ status: 'completed' }).eq('id', reservation.id)
+    try {
+      await trackApiCall('rooms:update_available', () => updateRoomStatus(reservation.room_id, 'available'))
+      await updateReservationStatus(reservation.id, 'completed')
       alert('퇴실 완료! 방이 공실로 바뀌었어요.')
       fetchMyData()
+    } catch (error) {
+      trackError(error, { flow: 'checkout' })
+      alert('퇴실 실패: ' + error.message)
     }
   }
 
   async function handleSurveyDone(reservationId) {
-    const { error } = await supabase.from('reservations').update({ survey_done: true }).eq('id', reservationId)
-    if (!error) fetchMyData()
+    trackInteraction('reservation_survey_done_click', { reservationId })
+    try {
+      await trackApiCall('reservations:update_survey_done', () => updateReservationSurveyDone(reservationId, true))
+      setSurveyDoneFlag(reservationId, true)
+      setReservations((current) =>
+        current.map((reservation) =>
+          String(reservation.id) === String(reservationId)
+            ? { ...reservation, survey_done: true }
+            : reservation
+        )
+      )
+      alert('설문 완료로 표시했어요.')
+      fetchMyData()
+    } catch (error) {
+      trackError(error, { flow: 'survey_done' })
+      alert('설문 완료 처리 실패: ' + error.message)
+    }
   }
 
   const totalPenalty = penalties.reduce((sum, p) => sum + p.points, 0)

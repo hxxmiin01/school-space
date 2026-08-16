@@ -1,6 +1,7 @@
 import { supabase } from '../supabaseClient'
 import { normalizeReservationRecord } from '../lib/roomName'
-import { fetchRemoteJson, resolveWithRemoteFallback } from './remoteClient'
+import { fetchRemoteJson, postRemoteJson, resolveWithRemoteFallback } from './remoteClient'
+import { remoteApiBaseUrl, isRemoteBackendSelected } from '../config/backend'
 
 async function fetchReservationsFromSupabase(userId) {
   let query = supabase.from('reservations').select('*, rooms(name)')
@@ -33,6 +34,124 @@ export async function fetchReservationsWithSource(userId) {
 export async function fetchReservations(userId) {
   const { reservations } = await fetchReservationsWithSource(userId)
   return reservations
+}
+
+export async function updateReservationStatus(reservationId, newStatus) {
+  if (reservationId === undefined || reservationId === null || reservationId === '') {
+    throw new Error('예약 ID가 없어서 상태를 바꿀 수 없어요.')
+  }
+
+  const reservationIdText = String(reservationId)
+  const isNumericReservationId = /^\d+$/.test(reservationIdText)
+
+  if (remoteApiBaseUrl) {
+    try {
+      const body = await postRemoteJson(
+        `/api/reservations/${encodeURIComponent(reservationIdText)}/status`,
+        { status: newStatus },
+        { errorLabel: '예약 상태 변경' }
+      )
+      return { source: 'azure', data: body }
+    } catch (error) {
+      if (!isNumericReservationId) {
+        throw error
+      }
+
+      console.warn('원격 예약 상태 변경에 실패해서 로컬 경로를 시도해요.', error)
+    }
+  }
+
+  if (!isNumericReservationId) {
+    throw new Error('이 예약은 로컬 Supabase 숫자 ID로 변경할 수 없어요. 원격 예약 상태 변경 경로를 사용해야 해요.')
+  }
+
+  const { error } = await supabase.from('reservations').update({ status: newStatus }).eq('id', Number(reservationIdText))
+  if (error) {
+    throw error
+  }
+
+  return { source: 'supabase' }
+}
+
+export async function updateRoomStatus(roomId, newStatus) {
+  if (roomId === undefined || roomId === null || roomId === '') {
+    throw new Error('방 ID가 없어서 상태를 바꿀 수 없어요.')
+  }
+
+  const roomIdText = String(roomId)
+  const isNumericRoomId = /^\d+$/.test(roomIdText)
+
+  if (remoteApiBaseUrl) {
+    try {
+      const body = await postRemoteJson(
+        `/api/rooms/${encodeURIComponent(roomIdText)}/status`,
+        { status: newStatus },
+        { errorLabel: '방 상태 변경' }
+      )
+      return { source: 'azure', data: body }
+    } catch (error) {
+      if (!isNumericRoomId) {
+        throw error
+      }
+
+      console.warn('원격 방 상태 변경에 실패해서 로컬 경로를 시도해요.', error)
+    }
+  }
+
+  if (!isNumericRoomId) {
+    throw new Error('이 방은 로컬 Supabase 숫자 ID로 변경할 수 없어요. 원격 방 상태 변경 경로를 사용해야 해요.')
+  }
+
+  const { error } = await supabase.from('rooms').update({ status: newStatus }).eq('id', Number(roomIdText))
+  if (error) {
+    throw error
+  }
+
+  return { source: 'supabase' }
+}
+
+export async function updateReservationSurveyDone(reservationId, surveyDone = true) {
+  if (reservationId === undefined || reservationId === null || reservationId === '') {
+    throw new Error('예약 ID가 없어서 설문 상태를 바꿀 수 없어요.')
+  }
+
+  const reservationIdText = String(reservationId)
+  const isNumericReservationId = /^\d+$/.test(reservationIdText)
+
+  if (remoteApiBaseUrl) {
+    try {
+      const body = await postRemoteJson(
+        `/api/reservations/${encodeURIComponent(reservationIdText)}/survey`,
+        { survey_done: Boolean(surveyDone) },
+        { errorLabel: '설문 완료 상태 변경' }
+      )
+      return { source: 'azure', data: body }
+    } catch (error) {
+      const isMissingSurveyEndpoint = /404/.test(error?.message || '')
+
+      if (!isNumericReservationId && isMissingSurveyEndpoint) {
+        console.warn('원격 설문 상태 변경 엔드포인트가 아직 없어서 로컬 완료 표시만 사용해요.', error)
+        return { source: 'azure-missing-endpoint' }
+      }
+
+      if (!isNumericReservationId) {
+        throw error
+      }
+
+      console.warn('원격 설문 상태 변경에 실패해서 로컬 경로를 시도해요.', error)
+    }
+  }
+
+  if (!isNumericReservationId) {
+    throw new Error('이 예약은 로컬 Supabase 숫자 ID로만 설문 상태를 바꿀 수 있어요. 원격 설문 상태 변경 경로를 사용해야 해요.')
+  }
+
+  const { error } = await supabase.from('reservations').update({ survey_done: Boolean(surveyDone) }).eq('id', Number(reservationIdText))
+  if (error) {
+    throw error
+  }
+
+  return { source: 'supabase' }
 }
 
 /**

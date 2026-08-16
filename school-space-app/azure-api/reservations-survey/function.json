@@ -1,0 +1,15 @@
+{
+  "bindings": [
+    {
+      "authLevel": "anonymous",
+      "type": "httpTrigger",
+      "direction": "in",
+      "methods": ["post"],
+      "route": "reservations/{id}/survey"
+    },
+    {
+      "type": "http",
+      "direction": "out"
+    }
+  ]
+}

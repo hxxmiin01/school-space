@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { fetchReservations as fetchReservationsApi } from '../api/reservations'
+import { fetchReservations as fetchReservationsApi, updateReservationStatus } from '../api/reservations'
 
 const STATUS_CONFIG = {
   pending:    { label: '⏳ 대기 중',   badge: 'bg-blue-50 text-blue-600' },
@@ -33,9 +33,17 @@ function AdminPage() {
   }
 
   async function handleStatus(id, newStatus) {
-    const { error } = await supabase.from('reservations').update({ status: newStatus }).eq('id', id)
-    if (error) alert('상태 변경 실패: ' + error.message)
-    else fetchReservations()
+    if (id === undefined || id === null || id === '') {
+      alert('이 예약에는 상태를 변경할 식별자가 없어요.')
+      return
+    }
+
+    try {
+      await updateReservationStatus(id, newStatus)
+      fetchReservations()
+    } catch (error) {
+      alert('상태 변경 실패: ' + error.message)
+    }
   }
 
   function openPenaltyModal(reservation) {
@@ -140,9 +148,10 @@ function AdminPage() {
       ) : (
         <div className="space-y-3">
           {filtered.map((r) => {
+            const reservationId = r.id ?? r.reservationId
             const cfg = STATUS_CONFIG[r.status] || STATUS_CONFIG.pending
             return (
-              <div key={r.id} className="bg-white rounded-xl border border-slate-200 shadow-sm px-5 py-4">
+              <div key={reservationId} className="bg-white rounded-xl border border-slate-200 shadow-sm px-5 py-4">
                 {/* 방 이름 + 상태 뱃지 */}
                 <div className="flex justify-between items-start mb-3">
                   <span className="font-semibold text-slate-800 text-lg leading-7">{r.rooms?.name}</span>
@@ -162,11 +171,11 @@ function AdminPage() {
                 <div className="flex gap-2 flex-wrap">
                   {r.status === 'pending' && (
                     <>
-                      <button onClick={() => handleStatus(r.id, 'approved')}
+                      <button onClick={() => handleStatus(reservationId, 'approved')}
                         className="px-4 py-1.5 bg-green-500 hover:bg-green-600 text-white text-sm font-medium rounded-lg transition-colors">
                         승인
                       </button>
-                      <button onClick={() => handleStatus(r.id, 'rejected')}
+                      <button onClick={() => handleStatus(reservationId, 'rejected')}
                         className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors">
                         거부
                       </button>

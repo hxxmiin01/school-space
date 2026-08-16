@@ -16,9 +16,10 @@ import { assistantApiPath, isAssistantConfigured } from '../config/aiAssistant'
  *
  * @param {string} message - the user's question, e.g. "지금 예약 가능한 방이 있나요?"
  * @param {{ role: 'user'|'assistant', text: string }[]} [history] - prior turns, oldest first
+ * @param {{ userId?: string }} [context] - extra request context forwarded to the assistant backend
  * @returns {Promise<{ ok: boolean, reply?: string, reason?: string, error?: string }>}
  */
-export async function askAssistant(message, history = []) {
+export async function askAssistant(message, history = [], context = {}) {
   const trimmed = typeof message === 'string' ? message.trim() : ''
   if (!trimmed) {
     return { ok: false, reason: 'empty-message' }
@@ -31,7 +32,7 @@ export async function askAssistant(message, history = []) {
   try {
     const body = await postRemoteJson(
       assistantApiPath,
-      { message: trimmed, history },
+      { message: trimmed, history, ...context },
       { errorLabel: 'AI 도우미' }
     )
 
