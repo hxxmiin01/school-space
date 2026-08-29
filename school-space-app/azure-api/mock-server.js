@@ -214,6 +214,82 @@ async function buildRoomReservationsReply(roomCode) {
   return `${roomName}의 예정된 예약 시간대예요 (개인정보 보호를 위해 시간만 보여드려요):\n${lines.join('\n')}`
 }
 
+// 내 학급의 누적 패널티를 구한다 (같은 class_name의 모든 학생 점수를 합산).
+async function fetchMyClassPenaltySummary(userId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY || !userId) {
+    return null
+  }
+
+  try {
+    const profileUrl = `${SUPABASE_URL}/rest/v1/profiles?select=class_name&id=eq.${encodeURIComponent(userId)}`
+    const profileRes = await fetch(profileUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!profileRes.ok) {
+      console.error('Supabase 프로필 조회 실패:', profileRes.status)
+      return null
+    }
+    const profiles = await profileRes.json()
+    const className = profiles?.[0]?.class_name
+    if (!className) {
+      return { className: null, totalPoints: 0 }
+    }
+
+    const classmatesUrl = `${SUPABASE_URL}/rest/v1/profiles?select=id&class_name=eq.${encodeURIComponent(className)}`
+    const classmatesRes = await fetch(classmatesUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!classmatesRes.ok) {
+      console.error('Supabase 같은 반 조회 실패:', classmatesRes.status)
+      return null
+    }
+    const classmates = await classmatesRes.json()
+    const ids = classmates.map((c) => c.id)
+    if (ids.length === 0) {
+      return { className, totalPoints: 0 }
+    }
+
+    const penaltiesUrl = `${SUPABASE_URL}/rest/v1/penalties?select=points&user_id=in.(${ids.join(',')})`
+    const penaltiesRes = await fetch(penaltiesUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!penaltiesRes.ok) {
+      console.error('Supabase 패널티 조회 실패:', penaltiesRes.status)
+      return null
+    }
+    const penalties = await penaltiesRes.json()
+    const totalPoints = penalties.reduce((sum, p) => sum + (p.points || 0), 0)
+
+    return { className, totalPoints }
+  } catch (error) {
+    console.error('Supabase 패널티 조회 오류:', error)
+    return null
+  }
+}
+
+async function buildPenaltyReply(userId) {
+  if (!userId) {
+    return '로그인 정보가 없어서 패널티 점수를 확인할 수 없어요. 로그인 후 다시 물어봐주세요.'
+  }
+
+  const summary = await fetchMyClassPenaltySummary(userId)
+
+  if (summary === null) {
+    return '패널티 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'
+  }
+
+  if (!summary.className) {
+    return '학급 정보가 없어서 패널티 점수를 확인할 수 없어요. 관리자에게 문의해주세요.'
+  }
+
+  const { className, totalPoints } = summary
+  if (totalPoints >= 10) {
+    return `${className}은 패널티 누적 ${totalPoints}점으로 1주일간 이용이 제한된 상태예요.`
+  }
+
+  return `${className}의 누적 패널티는 ${totalPoints}점이에요. (10점이 되면 1주일간 이용이 제한돼요)`
+}
+
 function getConnectionString() {
   const connectionString = process.env.AZURE_POSTGRES_CONNECTION_STRING
   if (!connectionString) {
@@ -666,6 +742,13 @@ async function handleAssistantRequest(body) {
   if (isRoomHistoryQuestion) {
     console.log(`📄 ${mentionedRoomCodeForHistory}룸 예약 내역 질문입니다.`)
     return await buildRoomReservationsReply(mentionedRoomCodeForHistory)
+  }
+
+  // 패널티 점수 질문도 예약 흐름보다 먼저 처리
+  const isPenaltyQuestion = /패널티/i.test(trimmedMessage)
+  if (isPenaltyQuestion) {
+    console.log(`📄 패널티 점수 질문입니다.`)
+    return await buildPenaltyReply(userId)
   }
 
   // 정보 질문인 경우
