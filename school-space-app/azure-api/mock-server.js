@@ -76,12 +76,17 @@ loadFrontendEnv()
 
 const SUPABASE_URL = process.env.SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ''
+// RLS(행 단위 보안)는 익명 키로 다른 사람 예약을 못 보게 막아놓아서, 서버(AI 도우미)에서만 이 키를 써야 RLS를 우회해 읽을 수 있다.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+const SUPABASE_SERVER_KEY = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
 
 const NUMERIC_ROOM_CODE_MAP = { 1: 'A', 2: 'B', 3: 'C', 4: 'D' }
 function roomNumericIdToName(numericId) {
   const code = NUMERIC_ROOM_CODE_MAP[String(numericId)]
   return code ? `스터디룸 ${code}` : `방 ${numericId}`
 }
+
+const ROOM_CODE_TO_NUMERIC_ID = { A: 1, B: 2, C: 3, D: 4 }
 
 const RESERVATION_STATUS_LABELS = {
   pending: '대기 중',
@@ -93,7 +98,7 @@ const RESERVATION_STATUS_LABELS = {
 
 // AI 도우미에서 실제 예약을 보여줘야 하니까, 진짜 데이터가 있는 Supabase에 직접 물어본다 (모의 서버 자체 저장소가 아님).
 async function fetchUpcomingReservationsFromSupabase(userId) {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !userId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY || !userId) {
     return null
   }
 
@@ -110,8 +115,8 @@ async function fetchUpcomingReservationsFromSupabase(userId) {
 
     const response = await fetch(url, {
       headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        apikey: SUPABASE_SERVER_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVER_KEY}`,
       },
     })
 
@@ -149,6 +154,64 @@ async function buildMyReservationsReply(userId) {
   })
 
   return `예정된 예약이에요:\n${lines.join('\n')}`
+}
+
+// 다른 사람 정보 보호를 위해 시간대만 익명으로 보여준다 (사용자/목적은 제외).
+async function fetchRoomReservationsFromSupabase(numericRoomId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
+    return null
+  }
+
+  try {
+    const today = getKoreaDateParts()
+    const todayStr = `${today.year}-${today.month}-${today.day}`
+    const url =
+      `${SUPABASE_URL}/rest/v1/reservations` +
+      `?select=date,start_time,end_time` +
+      `&room_id=eq.${numericRoomId}` +
+      `&date=gte.${todayStr}` +
+      `&status=neq.rejected` +
+      `&order=date.asc,start_time.asc`
+
+    const response = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVER_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVER_KEY}`,
+      },
+    })
+
+    if (!response.ok) {
+      console.error('Supabase 방별 예약 조회 실패:', response.status)
+      return null
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error('Supabase 방별 예약 조회 오류:', error)
+    return null
+  }
+}
+
+async function buildRoomReservationsReply(roomCode) {
+  const numericRoomId = ROOM_CODE_TO_NUMERIC_ID[roomCode]
+  const roomName = `스터디룸 ${roomCode}`
+
+  if (!numericRoomId) {
+    return '방 정보를 확인할 수 없어요. "A룸", "B룸"처럼 말씀해주세요.'
+  }
+
+  const reservations = await fetchRoomReservationsFromSupabase(numericRoomId)
+
+  if (reservations === null) {
+    return '예약 데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'
+  }
+
+  if (reservations.length === 0) {
+    return `${roomName}는 앞으로 예정된 예약이 없어요. 지금 바로 예약할 수 있어요!`
+  }
+
+  const lines = reservations.map((r) => `- ${r.date} ${r.start_time}~${r.end_time}`)
+  return `${roomName}의 예정된 예약 시간대예요 (개인정보 보호를 위해 시간만 보여드려요):\n${lines.join('\n')}`
 }
 
 function getConnectionString() {
@@ -594,6 +657,15 @@ async function handleAssistantRequest(body) {
   if (isMyReservationQuestion) {
     console.log(`📄 내 예약 내역 질문입니다.`)
     return await buildMyReservationsReply(userId)
+  }
+
+  // 특정 방 이름이 언급되고 정보성 질문이면 그 방의 예약 시간대를 알려준다 (새 예약 시작은 제외)
+  const mentionedRoomCodeForHistory = extractRoomCodeFromText(trimmedMessage, false)
+  const isRoomHistoryQuestion =
+    mentionedRoomCodeForHistory && !isActionReservation && (isInfoQuestion || /내역/.test(trimmedMessage))
+  if (isRoomHistoryQuestion) {
+    console.log(`📄 ${mentionedRoomCodeForHistory}룸 예약 내역 질문입니다.`)
+    return await buildRoomReservationsReply(mentionedRoomCodeForHistory)
   }
 
   // 정보 질문인 경우
