@@ -1,5 +1,5 @@
 import { supabase } from '../supabaseClient'
-import { normalizeReservationRecord } from '../lib/roomName'
+import { normalizeReservationRecord, toNumericRoomId } from '../lib/roomName'
 import { fetchRemoteJson, postRemoteJson, resolveWithRemoteFallback } from './remoteClient'
 import { remoteApiBaseUrl, isRemoteBackendSelected } from '../config/backend'
 
@@ -44,7 +44,7 @@ export async function updateReservationStatus(reservationId, newStatus) {
   const reservationIdText = String(reservationId)
   const isNumericReservationId = /^\d+$/.test(reservationIdText)
 
-  if (remoteApiBaseUrl) {
+  if (isRemoteBackendSelected() && remoteApiBaseUrl) {
     try {
       const body = await postRemoteJson(
         `/api/reservations/${encodeURIComponent(reservationIdText)}/status`,
@@ -81,7 +81,7 @@ export async function updateRoomStatus(roomId, newStatus) {
   const roomIdText = String(roomId)
   const isNumericRoomId = /^\d+$/.test(roomIdText)
 
-  if (remoteApiBaseUrl) {
+  if (isRemoteBackendSelected() && remoteApiBaseUrl) {
     try {
       const body = await postRemoteJson(
         `/api/rooms/${encodeURIComponent(roomIdText)}/status`,
@@ -118,7 +118,7 @@ export async function updateReservationSurveyDone(reservationId, surveyDone = tr
   const reservationIdText = String(reservationId)
   const isNumericReservationId = /^\d+$/.test(reservationIdText)
 
-  if (remoteApiBaseUrl) {
+  if (isRemoteBackendSelected() && remoteApiBaseUrl) {
     try {
       const body = await postRemoteJson(
         `/api/reservations/${encodeURIComponent(reservationIdText)}/survey`,
@@ -215,7 +215,7 @@ function toSupabaseInsertRow(command) {
   // idempotency-key column) can differ from this shape without touching any
   // call site that builds a command.
   return {
-    room_id: command.roomId,
+    room_id: toNumericRoomId(command.roomId),
     user_id: command.userId,
     date: command.date,
     start_time: command.startTime,

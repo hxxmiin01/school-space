@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { createReservationCommand, submitReservationCommand } from '../api/reservations'
+import { toNumericRoomId } from '../lib/roomName'
 
 // Makes a fresh idempotency/request key for one reservation *attempt*. Kept
 // as its own helper (instead of inlining `crypto.randomUUID()`) so the "how
@@ -98,6 +99,11 @@ function ReservationPage() {
     // progress" lock and the loading spinner always get released — even on
     // an early validation `return` or a thrown error.
     try {
+      const numericRoomId = toNumericRoomId(room.id)
+      if (numericRoomId === null) {
+        setErrorMsg('방 정보를 확인할 수 없어요. 홈 화면에서 다시 방을 선택해주세요.')
+        return
+      }
       const startTime = combineTime(startHour, startMinute)
       const endTime = combineTime(endHour, endMinute)
 
@@ -109,6 +115,12 @@ function ReservationPage() {
       // 기본 시간 검증: 시작 시간은 종료 시간보다 빨라야 함
       if (startTime >= endTime) {
         setErrorMsg('시작 시간은 종료 시간보다 빨라야 해요.')
+        return
+      }
+
+      // 날짜 포맷 검증 및 정규화 (YYYY-MM-DD 형식 필수)
+      if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        setErrorMsg('날짜를 올바르게 선택해주세요.')
         return
       }
 
@@ -170,12 +182,13 @@ function ReservationPage() {
       const { data: sameRoomReservations, error: overlapFetchError } = await supabase
         .from('reservations')
         .select('start_time, end_time, status')
-        .eq('room_id', room.id)
+        .eq('room_id', numericRoomId)
         .eq('date', date)
         .neq('status', 'rejected')
 
       if (overlapFetchError) {
-        setErrorMsg('기존 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        console.error('예약 조회 오류:', overlapFetchError)
+        setErrorMsg(`기존 예약 확인 중 오류가 발생했어요. 관리자에게 문의해주세요. [${overlapFetchError.message}]`)
         return
       }
 
@@ -200,7 +213,8 @@ function ReservationPage() {
         .neq('status', 'rejected')
 
       if (myOverlapFetchError) {
-        setErrorMsg('내 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        console.error('내 예약 조회 오류:', myOverlapFetchError)
+        setErrorMsg(`내 예약 확인 중 오류가 발생했어요. 관리자에게 문의해주세요. [${myOverlapFetchError.message}]`)
         return
       }
 
