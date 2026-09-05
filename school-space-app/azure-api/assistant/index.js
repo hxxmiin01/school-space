@@ -8,6 +8,7 @@
 module.exports = async function (context, req) {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : ''
   const history = Array.isArray(req.body?.history) ? req.body.history : []
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : ''
 
   // 메시지 검증
   if (!message) {
@@ -15,6 +16,33 @@ module.exports = async function (context, req) {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
       body: { error: 'message가 비어 있어요.' },
+    }
+    return
+  }
+
+  const hasReservationContext = history.some((turn) =>
+    typeof turn?.text === 'string' && /예약|스터디룸|방|공간|시간|인원|목적/i.test(turn.text)
+  )
+  const isGreeting = /^(안녕|안녕하세요|하이|hello|hi)[!！.。\s]*$/i.test(message)
+  if (isGreeting) {
+    context.res = {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        reply: '안녕하세요! 스터디룸 예약, 공간 현황, 입실·퇴실에 대해 도와드릴게요. 무엇이 궁금한가요?',
+      },
+    }
+    return
+  }
+
+  const isSchoolSpaceQuestion = /예약|스터디룸|방|공간|패널티|입실|퇴실|체크인|체크아웃|공실|이용|사용/i.test(message)
+  if (!isSchoolSpaceQuestion && !hasReservationContext) {
+    context.res = {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        reply: '저는 스터디룸 예약, 공간 현황, 입실·퇴실, 패널티 관련 질문을 도와드릴 수 있어요. 해당 내용으로 다시 질문해주세요.',
+      },
     }
     return
   }
@@ -33,7 +61,47 @@ module.exports = async function (context, req) {
     return
   }
 
+  async function fetchUserReservations() {
+    const supabaseUrl = process.env.SUPABASE_URL
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!supabaseUrl || !supabaseServiceRoleKey || !userId) {
+      return []
+    }
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const todayText = today.toISOString().slice(0, 10)
+    const latestDate = new Date(today)
+    latestDate.setDate(latestDate.getDate() + 7)
+    const latestDateText = latestDate.toISOString().slice(0, 10)
+    const url = `${supabaseUrl}/rest/v1/reservations?select=room_id,date,start_time,end_time,status&user_id=eq.${encodeURIComponent(userId)}&date=gte.${todayText}&date=lte.${latestDateText}&status=neq.rejected&order=date.asc,start_time.asc`
+    const response = await fetch(url, {
+      headers: {
+        apikey: supabaseServiceRoleKey,
+        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Supabase 예약 조회 실패: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
   try {
+    let reservationContext = ''
+    try {
+      const reservations = await fetchUserReservations()
+      if (reservations.length > 0) {
+        reservationContext = `\n사용자의 예정 예약 데이터(Supabase):\n${reservations
+          .map((reservation) => `- 방 ${reservation.room_id} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | 상태: ${reservation.status}`)
+          .join('\n')}\n`
+      }
+    } catch (error) {
+      console.warn('AI 도우미가 Supabase 예약 데이터를 읽지 못했어요.', error.message)
+    }
+
     // Foundry Responses API 형식으로 요청 준비
     // (표준 OpenAI chat completions와는 다름)
     
@@ -88,7 +156,7 @@ module.exports = async function (context, req) {
 - 학교에 스터디룸 4개가 있다 (study-room-1, study-room-2, study-room-3, study-room-4)
 - 한 번에 1시간 ~ 3시간 단위로 예약 가능하다
 - 예약은 담당자 승인 후 사용 가능하다
-- 시간: 09:00 ~ 18:00
+- 시간: 08:00 ~ 22:00
 
 패널티 시스템:
 - 룸 정리 미흡 또는 물품 훼손 시 1~10점 패널티
@@ -97,7 +165,7 @@ module.exports = async function (context, req) {
 예약 정보 수집:
 사용자가 예약을 요청하면 다음 정보를 수집한다:
 - 날짜: YYYY-MM-DD 형식
-- 시작 시간: HH:00 형식 (09:00 ~ 18:00)
+- 시작 시간: HH:00 형식 (08:00 ~ 22:00)
 - 종료 시간: HH:00 형식
 - 인원 수: 숫자
 - 사용 목적: 한두 문장으로 설명
@@ -123,7 +191,7 @@ module.exports = async function (context, req) {
 - 종료 시간은 시작 시간보다 늦어야 하지만, 사용자가 수정 답변을 보냈다면 그 시간 값을 먼저 반영하고 나서만 검증한다.
 - 같은 질문을 연속해서 반복하지 말고, 방금 받은 답이 어느 칸에 들어가는지 먼저 판단한다.
 
-${conversationContext}사용자: ${message}`
+${reservationContext}\n${conversationContext}사용자: ${message}`
 
     // Foundry API 호출 (Responses API 형식)
     const response = await fetch(endpoint, {

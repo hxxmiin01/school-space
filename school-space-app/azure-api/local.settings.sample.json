@@ -7,6 +7,7 @@
     "FOUNDRY_ENDPOINT": "https://aldlcndac.services.ai.azure.com/openai/v1/responses",
     "FOUNDRY_API_KEY": "<your-foundry-api-key>",
     "FOUNDRY_MODEL": "gpt-5.4-mini",
+    "SUPABASE_URL": "https://<your-project>.supabase.co",
     "SUPABASE_SERVICE_ROLE_KEY": "<supabase-project-settings-api-service_role-secret-key>"
   }
 }

@@ -24,6 +24,8 @@ describe('Assistant API (Foundry)', () => {
     delete process.env.FOUNDRY_ENDPOINT
     delete process.env.FOUNDRY_API_KEY
     delete process.env.FOUNDRY_MODEL
+    delete process.env.SUPABASE_URL
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY
     delete process.env.AZURE_FUNCTIONS_BASE_URL
   })
 
@@ -116,6 +118,75 @@ describe('Assistant API (Foundry)', () => {
     
     // 현재 메시지가 포함되는지 확인
     expect(requestBody.input).toContain('사용자: 내일은?')
+  })
+
+  test('should guide users when the question is unrelated to school space features', async () => {
+    await assistantFunction(context, {
+      body: {
+        message: '오늘 저녁 메뉴 추천해줘',
+        history: [],
+      },
+    })
+
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain('스터디룸 예약')
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('should greet users instead of showing the unrelated-question guide', async () => {
+    await assistantFunction(context, {
+      body: {
+        message: '안녕',
+        history: [],
+      },
+    })
+
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain('안녕하세요')
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('should include the user reservations read from Supabase in the Foundry prompt', async () => {
+    process.env.SUPABASE_URL = 'https://example.supabase.co'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-test-key'
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([
+          {
+            room_id: 2,
+            date: '2026-09-06',
+            start_time: '10:00',
+            end_time: '11:00',
+            status: 'approved',
+          },
+        ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: [{ content: [{ text: '예약 내역을 확인했어요.' }] }],
+        }),
+      })
+
+    await assistantFunction(context, {
+      body: {
+        message: '내 예약 상태를 알려줘',
+        userId: 'user-123',
+        history: [],
+      },
+    })
+
+    const supabaseCall = global.fetch.mock.calls[0]
+    expect(supabaseCall[0]).toContain('https://example.supabase.co/rest/v1/reservations')
+    expect(supabaseCall[0]).toContain('user_id=eq.user-123')
+    expect(supabaseCall[0]).toMatch(/date=gte\.\d{4}-\d{2}-\d{2}&date=lte\.\d{4}-\d{2}-\d{2}/)
+    expect(supabaseCall[1].headers.Authorization).toBe('Bearer service-role-test-key')
+
+    const foundryBody = JSON.parse(global.fetch.mock.calls[1][1].body)
+    expect(foundryBody.input).toContain('사용자의 예정 예약 데이터(Supabase)')
+    expect(foundryBody.input).toContain('방 2 | 2026-09-06 10:00~11:00')
   })
 
   // ===== 에러 처리 테스트 =====
@@ -465,7 +536,7 @@ describe('Assistant API (Foundry)', () => {
 
     const req = {
       body: {
-        message: '안녕',
+        message: '스터디룸 안녕',
         history: [],
       },
     }

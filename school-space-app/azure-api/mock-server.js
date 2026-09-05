@@ -105,11 +105,14 @@ async function fetchUpcomingReservationsFromSupabase(userId) {
   try {
     const today = getKoreaDateParts()
     const todayStr = `${today.year}-${today.month}-${today.day}`
+    const latestDate = addKoreaDays(7)
+    const latestDateStr = `${latestDate.year}-${latestDate.month}-${latestDate.day}`
     const url =
       `${SUPABASE_URL}/rest/v1/reservations` +
       `?select=room_id,date,start_time,end_time,status` +
       `&user_id=eq.${encodeURIComponent(userId)}` +
       `&date=gte.${todayStr}` +
+      `&date=lte.${latestDateStr}` +
       `&status=neq.rejected` +
       `&order=date.asc,start_time.asc`
 
@@ -165,11 +168,14 @@ async function fetchRoomReservationsFromSupabase(numericRoomId) {
   try {
     const today = getKoreaDateParts()
     const todayStr = `${today.year}-${today.month}-${today.day}`
+    const latestDate = addKoreaDays(7)
+    const latestDateStr = `${latestDate.year}-${latestDate.month}-${latestDate.day}`
     const url =
       `${SUPABASE_URL}/rest/v1/reservations` +
       `?select=date,start_time,end_time` +
       `&room_id=eq.${numericRoomId}` +
       `&date=gte.${todayStr}` +
+      `&date=lte.${latestDateStr}` +
       `&status=neq.rejected` +
       `&order=date.asc,start_time.asc`
 
@@ -678,6 +684,10 @@ async function handleAssistantRequest(body) {
   const userId = body?.userId || body?.user_id || null
   const trimmedMessage = message.trim()
 
+  if (/^(안녕|안녕하세요|하이|hello|hi)[!！.。\s]*$/i.test(trimmedMessage)) {
+    return '안녕하세요! 스터디룸 예약, 공간 현황, 입실·퇴실에 대해 도와드릴게요. 무엇이 궁금한가요?'
+  }
+
   console.log(`📨 사용자 메시지: "${message}"`)
   console.log(`📌 예약 정책 적용 중: ${RESERVATION_SYSTEM_PROMPT.split('\n')[0]}`)
 
@@ -729,7 +739,7 @@ async function handleAssistantRequest(body) {
   const isAwaitingPurpose = /사용\s*목적/.test(lastAssistantMessage)
 
   // 내 예약 내역 질문은 예약 흐름(방/날짜/시간 수집)보다 먼저 처리해야 함
-  const isMyReservationQuestion = /(내|제|나의)\s*예약/i.test(trimmedMessage)
+  const isMyReservationQuestion = /(내|내가|제|제가|나의)\s*예약/i.test(trimmedMessage)
   if (isMyReservationQuestion) {
     console.log(`📄 내 예약 내역 질문입니다.`)
     return await buildMyReservationsReply(userId)
@@ -760,7 +770,7 @@ async function handleAssistantRequest(body) {
   // 예약도 정보도 아닌 기타 질문인 경우 (단, 대화 컨텍스트 무시)
   if (!isActionReservation && !isInfoQuestion && !hasReservationContext) {
     console.log(`ℹ️  기타 질문입니다.`)
-    return '무엇을 도와드릴까요? 공간 현황을 확인하거나 예약을 하고 싶으시다면 알려주세요!'
+    return '저는 스터디룸 예약, 공간 현황, 입실·퇴실, 패널티 관련 질문을 도와드릴 수 있어요. 해당 내용으로 다시 질문해주세요.'
   }
 
   // ===== 예약 프로세스 시작 =====
