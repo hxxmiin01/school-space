@@ -10,6 +10,21 @@ module.exports = async function (context, req) {
   const history = Array.isArray(req.body?.history) ? req.body.history : []
   const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : ''
 
+  function getFunctionsBaseUrl() {
+    if (process.env.AZURE_FUNCTIONS_BASE_URL) {
+      return process.env.AZURE_FUNCTIONS_BASE_URL.replace(/\/$/, '')
+    }
+
+    const host = req.headers?.host
+    if (host && !/^localhost(?::\d+)?$/i.test(host)) {
+      const forwardedProtocol = req.headers?.['x-forwarded-proto']
+      const protocol = forwardedProtocol || 'https'
+      return `${protocol}://${host}`
+    }
+
+    return 'http://localhost:7071'
+  }
+
   // 메시지 검증
   if (!message) {
     context.res = {
@@ -281,7 +296,7 @@ ${reservationContext}\n${conversationContext}사용자: ${message}`
     if (reservationData) {
       try {
         // Azure Functions 기본 URL (로컬: localhost:7071, 프로덕션: Azure Functions URL)
-        const basePath = process.env.AZURE_FUNCTIONS_BASE_URL || 'http://localhost:7071'
+        const basePath = getFunctionsBaseUrl()
         const reserveUrl = `${basePath}/api/reserve`
 
         const reserveResponse = await fetch(reserveUrl, {

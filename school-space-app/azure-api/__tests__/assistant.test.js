@@ -527,6 +527,40 @@ describe('Assistant API (Foundry)', () => {
     expect(secondCallArgs[0]).toContain('https://my-functions.azurewebsites.net/api/reserve')
   })
 
+  test('should use the request host when deployed base URL is not configured', async () => {
+    const reservationJson = JSON.stringify({
+      action: 'make_reservation',
+      date: '2024-12-15',
+      start_time: '14:00',
+      end_time: '16:00',
+      members_count: 2,
+      purpose: '영어 스터디',
+      room_id: 'study-room-1',
+    })
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ output: [{ content: [{ text: reservationJson }] }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ success: true, reservationId: 'RES-67890' }),
+      })
+
+    await assistantFunction(
+      context,
+      {
+        headers: { host: 'school-space-api2-9726.azurewebsites.net' },
+        body: { message: '예약해줘', userId: 'user-123', history: [] },
+      },
+    )
+
+    expect(global.fetch.mock.calls[1][0]).toBe(
+      'https://school-space-api2-9726.azurewebsites.net/api/reserve',
+    )
+  })
+
   test('should handle alternative response formats from Foundry', async () => {
     // Arrange: 다양한 응답 형식 지원
     global.fetch.mockResolvedValue({
