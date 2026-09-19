@@ -66,30 +66,22 @@ function LoginPage() {
     const className = `${grade}학년 ${classNum}반`
 
     const { data, error } = await trackApiCall('auth:signUp', () =>
-      supabase.auth.signUp({ email: trimmedEmail, password })
+      supabase.auth.signUp({
+        email: trimmedEmail,
+        password,
+        options: {
+          data: {
+            name: trimmedName,
+            class_name: className,
+          },
+        },
+      })
     )
     if (error) {
       trackError(error, { flow: 'signup' })
       setErrorMsg(toFriendlyAuthError(error, '회원가입'))
       setLoading(false)
       return
-    }
-
-    if (data.user) {
-      const { error: profileError } = await trackApiCall('profiles:insert', () =>
-        supabase.from('profiles').insert({
-          id: data.user.id,
-          role: 'student',
-          name: trimmedName,
-          class_name: className,
-        })
-      )
-      if (profileError) {
-        trackError(profileError, { flow: 'signup_profile' })
-        setErrorMsg('프로필 저장 실패: ' + profileError.message)
-        setLoading(false)
-        return
-      }
     }
 
     setCanResendVerification(true)
