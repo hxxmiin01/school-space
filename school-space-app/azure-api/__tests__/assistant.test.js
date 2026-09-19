@@ -312,6 +312,7 @@ describe('Assistant API (Foundry)', () => {
       body: {
         message: '2024년 12월 15일 14시부터 16시까지 3명이서 스터디1룸 예약해줄래?',
         history: [],
+        userId: 'user-123',
       },
     }
 
@@ -336,9 +337,10 @@ describe('Assistant API (Foundry)', () => {
     
     const reserveRequestBody = JSON.parse(secondCallArgs[1].body)
     expect(reserveRequestBody.date).toBe('2024-12-15')
-    expect(reserveRequestBody.start_time).toBe('14:00')
-    expect(reserveRequestBody.end_time).toBe('16:00')
-    expect(reserveRequestBody.members_count).toBe(3)
+    expect(reserveRequestBody.startTime).toBe('14:00')
+    expect(reserveRequestBody.endTime).toBe('16:00')
+    expect(reserveRequestBody.membersCount).toBe(3)
+    expect(reserveRequestBody.userId).toBe('user-123')
     expect(reserveRequestBody.purpose).toBe('수학 스터디')
   })
 

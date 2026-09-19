@@ -289,11 +289,12 @@ ${reservationContext}\n${conversationContext}사용자: ${message}`
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             date: reservationData.date,
-            start_time: reservationData.start_time,
-            end_time: reservationData.end_time,
-            members_count: reservationData.members_count,
+            startTime: reservationData.start_time,
+            endTime: reservationData.end_time,
+            membersCount: reservationData.members_count,
             purpose: reservationData.purpose,
-            room_id: reservationData.room_id,
+            roomId: reservationData.room_id,
+            userId,
           }),
         })
 
