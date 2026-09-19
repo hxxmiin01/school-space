@@ -189,6 +189,36 @@ describe('Assistant API (Foundry)', () => {
     expect(foundryBody.input).toContain('방 2 | 2026-09-06 10:00~11:00')
   })
 
+  test('should include room status when the user asks about vacancies', async () => {
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([
+          { id: 'study-room-1', name: 'study-room-1', status: 'available' },
+          { id: 'study-room-2', name: 'study-room-2', status: 'occupied' },
+        ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: [{ content: [{ text: '1번 방이 공실이에요.' }] }],
+        }),
+      })
+
+    await assistantFunction(context, {
+      headers: { host: 'school-space-api2-9726.azurewebsites.net' },
+      body: { message: '공실인 방이 있나요?', history: [] },
+    })
+
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      'https://school-space-api2-9726.azurewebsites.net/api/rooms',
+    )
+    const foundryBody = JSON.parse(global.fetch.mock.calls[1][1].body)
+    expect(foundryBody.input).toContain('현재 스터디룸 상태 데이터')
+    expect(foundryBody.input).toContain('study-room-1: available')
+    expect(foundryBody.input).toContain('study-room-2: occupied')
+  })
+
   // ===== 에러 처리 테스트 =====
 
   test('should return 400 error when message is empty', async () => {

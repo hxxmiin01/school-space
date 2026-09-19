@@ -104,6 +104,14 @@ module.exports = async function (context, req) {
     return response.json()
   }
 
+  async function fetchRoomStatus() {
+    const response = await fetch(`${getFunctionsBaseUrl()}/api/rooms`)
+    if (!response.ok) {
+      throw new Error(`스터디룸 상태 조회 실패: ${response.status}`)
+    }
+    return response.json()
+  }
+
   try {
     let reservationContext = ''
     try {
@@ -115,6 +123,20 @@ module.exports = async function (context, req) {
       }
     } catch (error) {
       console.warn('AI 도우미가 Supabase 예약 데이터를 읽지 못했어요.', error.message)
+    }
+
+    let roomStatusContext = ''
+    const isRoomStatusQuestion = /공실|사용\s*중|청소\s*중|방\s*상태|사용\s*가능/i.test(message)
+    if (isRoomStatusQuestion) {
+      try {
+        const rooms = await fetchRoomStatus()
+        roomStatusContext = `\n현재 스터디룸 상태 데이터:\n${rooms
+          .map((room) => `- ${room.name || room.id}: ${room.status || '상태 미상'}`)
+          .join('\n')}\n`
+      } catch (error) {
+        roomStatusContext = '\n현재 스터디룸 상태를 조회하지 못했으므로 공실 여부를 단정하지 않는다.\n'
+        console.warn('AI 도우미가 스터디룸 상태를 읽지 못했어요.', error.message)
+      }
     }
 
     // Foundry Responses API 형식으로 요청 준비
@@ -219,7 +241,7 @@ module.exports = async function (context, req) {
 - 종료 시간은 시작 시간보다 늦어야 하지만, 사용자가 수정 답변을 보냈다면 그 시간 값을 먼저 반영하고 나서만 검증한다.
 - 같은 질문을 연속해서 반복하지 말고, 방금 받은 답이 어느 칸에 들어가는지 먼저 판단한다.
 
-${reservationContext}\n${conversationContext}사용자: ${message}`
+${reservationContext}${roomStatusContext}\n${conversationContext}사용자: ${message}`
 
     // Foundry API 호출 (Responses API 형식)
     const response = await fetch(endpoint, {
