@@ -28,6 +28,15 @@ function App() {
   const [session, setSession] = useState(null)
   const [isAdmin, setIsAdmin] = useState(false)
 
+  async function fetchProfile(userId) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single()
+    setIsAdmin(data?.role === 'admin')
+  }
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
@@ -42,15 +51,6 @@ function App() {
 
     return () => subscription.unsubscribe()
   }, [])
-
-  async function fetchProfile(userId) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', userId)
-      .single()
-    setIsAdmin(data?.role === 'admin')
-  }
 
   async function handleLogout() {
     trackInteraction('logout_click')

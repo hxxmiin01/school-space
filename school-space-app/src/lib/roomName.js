@@ -13,6 +13,16 @@ function getRoomCodeFromId(id) {
   return ROOM_CODE_MAP[String(id)] || null
 }
 
+// `reservations.room_id`는 정수 컬럼이지만 `rooms.id`는 'study-room-1' 같은 문자열이라,
+// insert/조회 전에 항상 이 변환을 거쳐야 함.
+export function toNumericRoomId(roomId) {
+  if (roomId === null || roomId === undefined || roomId === '') return null
+  const text = String(roomId)
+  if (/^\d+$/.test(text)) return Number(text)
+  const match = text.match(/(\d+)\s*$/)
+  return match ? Number(match[1]) : null
+}
+
 function normalizeRoomKey(name) {
   return String(name || '')
     .trim()

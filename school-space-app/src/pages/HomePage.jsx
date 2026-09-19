@@ -40,13 +40,14 @@ function HomePage() {
     return sorted.map((room) => {
       const code = getRoomCode(room?.name)
       const status = STATUS_CONFIG[room?.status] || STATUS_CONFIG.cleaning
-      const isReservable = room?.status === 'available'
+      // 방이 지금 사용 중/청소 중이어도 다른 날짜·시간에는 예약할 수 있어야 하므로
+      // 상태는 표시만 하고, 예약 이동 자체는 항상 허용한다.
       return {
         id: room.id,
         title: code ? `스터디룸 ${code}` : room.name,
         status,
         room,
-        isReservable,
+        isReservable: true,
       }
     })
   }, [rooms])
@@ -122,7 +123,7 @@ function HomePage() {
               {room.status.icon} {room.status.label}
             </p>
             <p className="mt-5 text-sm text-slate-500">
-              {room.isReservable ? '클릭하면 예약 창으로 이동해요.' : '현재는 사용 중이라 예약할 수 없어요.'}
+              클릭하면 예약 창으로 이동해요. (지금 상태는 참고용이에요)
             </p>
           </button>
         ))}

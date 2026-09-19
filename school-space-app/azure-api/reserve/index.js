@@ -29,6 +29,37 @@ module.exports = async function (context, req) {
     return
   }
 
+  const isTimeFormat = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
+  if (!isTimeFormat(startTime) || !isTimeFormat(endTime) || startTime >= endTime || startTime < '08:00' || endTime > '22:00') {
+    context.res = {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        success: false,
+        error: '예약 가능 시간은 오전 8시부터 오후 10시까지입니다.',
+      },
+    }
+    return
+  }
+
+  const isDateFormat = /^\d{4}-\d{2}-\d{2}$/.test(date)
+  const selectedDate = new Date(`${date}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const latestDate = new Date(today)
+  latestDate.setDate(latestDate.getDate() + 7)
+  if (!isDateFormat || Number.isNaN(selectedDate.getTime()) || selectedDate < today || selectedDate > latestDate) {
+    context.res = {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: {
+        success: false,
+        error: '예약은 오늘부터 일주일 이내 날짜만 가능합니다.',
+      },
+    }
+    return
+  }
+
   try {
     await client.connect()
 

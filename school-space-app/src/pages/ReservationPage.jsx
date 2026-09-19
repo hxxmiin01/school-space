@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { supabase } from '../supabaseClient'
 import { createReservationCommand, submitReservationCommand } from '../api/reservations'
+import { toNumericRoomId } from '../lib/roomName'
 
 // Makes a fresh idempotency/request key for one reservation *attempt*. Kept
 // as its own helper (instead of inlining `crypto.randomUUID()`) so the "how
@@ -12,6 +13,10 @@ function createIdempotencyKey() {
 
 const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
 const MINUTES = Array.from({ length: 6 }, (_, i) => String(i * 10).padStart(2, '0'))
+const OPERATING_START = '08:00'
+const OPERATING_END = '22:00'
+const OPERATING_START_HOURS = HOURS.filter((hour) => `${hour}:00` >= OPERATING_START && `${hour}:00` < OPERATING_END)
+const OPERATING_END_HOURS = HOURS.filter((hour) => `${hour}:00` >= OPERATING_START && `${hour}:00` <= OPERATING_END)
 
 function splitTime(time) {
   if (!time || !time.includes(':')) return { hour: '', minute: '' }
@@ -59,6 +64,9 @@ function ReservationPage() {
   const isSubmittingRef = useRef(false)
   const now = new Date()
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const maxDateValue = new Date(now)
+  maxDateValue.setDate(maxDateValue.getDate() + 7)
+  const maxDateStr = `${maxDateValue.getFullYear()}-${String(maxDateValue.getMonth() + 1).padStart(2, '0')}-${String(maxDateValue.getDate()).padStart(2, '0')}`
   const startTimePreview = combineTime(startHour, startMinute)
   const endTimePreview = combineTime(endHour, endMinute)
   const fieldLabelClass = 'block text-sm font-medium text-slate-700'
@@ -98,6 +106,11 @@ function ReservationPage() {
     // progress" lock and the loading spinner always get released — even on
     // an early validation `return` or a thrown error.
     try {
+      const numericRoomId = toNumericRoomId(room.id)
+      if (numericRoomId === null) {
+        setErrorMsg('방 정보를 확인할 수 없어요. 홈 화면에서 다시 방을 선택해주세요.')
+        return
+      }
       const startTime = combineTime(startHour, startMinute)
       const endTime = combineTime(endHour, endMinute)
 
@@ -112,12 +125,29 @@ function ReservationPage() {
         return
       }
 
+      if (startTime < OPERATING_START || endTime > OPERATING_END) {
+        setErrorMsg(`방은 오전 8시부터 오후 10시까지만 예약할 수 있어요.`)
+        return
+      }
+
+      // 날짜 포맷 검증 및 정규화 (YYYY-MM-DD 형식 필수)
+      if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        setErrorMsg('날짜를 올바르게 선택해주세요.')
+        return
+      }
+
       // 기본 날짜 검증: 오늘 이전 날짜는 예약 불가
       const selectedDate = new Date(`${date}T00:00:00`)
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       if (selectedDate < today) {
         setErrorMsg('지난 날짜는 예약할 수 없어요. 오늘 이후 날짜를 선택해주세요.')
+        return
+      }
+      const latestDate = new Date(today)
+      latestDate.setDate(latestDate.getDate() + 7)
+      if (selectedDate > latestDate) {
+        setErrorMsg('예약은 오늘부터 일주일 이내 날짜만 선택할 수 있어요.')
         return
       }
 
@@ -170,12 +200,13 @@ function ReservationPage() {
       const { data: sameRoomReservations, error: overlapFetchError } = await supabase
         .from('reservations')
         .select('start_time, end_time, status')
-        .eq('room_id', room.id)
+        .eq('room_id', numericRoomId)
         .eq('date', date)
         .neq('status', 'rejected')
 
       if (overlapFetchError) {
-        setErrorMsg('기존 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        console.error('예약 조회 오류:', overlapFetchError)
+        setErrorMsg(`기존 예약 확인 중 오류가 발생했어요. 관리자에게 문의해주세요. [${overlapFetchError.message}]`)
         return
       }
 
@@ -200,7 +231,8 @@ function ReservationPage() {
         .neq('status', 'rejected')
 
       if (myOverlapFetchError) {
-        setErrorMsg('내 예약 확인 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.')
+        console.error('내 예약 조회 오류:', myOverlapFetchError)
+        setErrorMsg(`내 예약 확인 중 오류가 발생했어요. 관리자에게 문의해주세요. [${myOverlapFetchError.message}]`)
         return
       }
 
@@ -275,6 +307,7 @@ function ReservationPage() {
               value={date}
               onChange={(e) => setDate(e.target.value)}
               min={todayStr}
+              max={maxDateStr}
               required
               className={inputClass}
             />
@@ -282,7 +315,7 @@ function ReservationPage() {
 
           <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
             <p className="text-sm font-semibold text-slate-700">이용 시간 선택</p>
-            <p className="text-xs text-slate-500 mt-1 mb-3">분은 10분 단위로 선택할 수 있어요.</p>
+            <p className="text-xs text-slate-500 mt-1 mb-3">운영 시간은 오전 8시부터 오후 10시까지이며, 분은 10분 단위로 선택할 수 있어요.</p>
             {(startTimePreview || endTimePreview) && (
               <div className="mb-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-700">
                 선택 시간: <span className="font-semibold">{startTimePreview || '--:--'} ~ {endTimePreview || '--:--'}</span>
@@ -317,7 +350,7 @@ function ReservationPage() {
                     className={selectClass}
                   >
                     <option value="">시</option>
-                    {HOURS.map((h) => (
+                    {OPERATING_START_HOURS.map((h) => (
                       <option key={h} value={h}>{h}시</option>
                     ))}
                   </select>
@@ -365,7 +398,7 @@ function ReservationPage() {
                     className={selectClass}
                   >
                     <option value="">시</option>
-                    {HOURS.map((h) => (
+                    {OPERATING_END_HOURS.map((h) => (
                       <option key={h} value={h}>{h}시</option>
                     ))}
                   </select>

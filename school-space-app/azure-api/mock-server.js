@@ -44,6 +44,258 @@ function loadLocalSettingsEnvironment() {
 
 loadLocalSettingsEnvironment()
 
+// 프론트엔드(.env)와 같은 Supabase 주소/익명 키를 재사용해, AI 도우미도 실제 예약 데이터를 볼 수 있게 함.
+function loadFrontendEnv() {
+  const envPath = path.join(__dirname, '..', '.env')
+  if (!fs.existsSync(envPath)) {
+    return
+  }
+
+  try {
+    const content = fs.readFileSync(envPath, 'utf8')
+    for (const line of content.split('\n')) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine || trimmedLine.startsWith('#')) continue
+      const eqIndex = trimmedLine.indexOf('=')
+      if (eqIndex === -1) continue
+      const key = trimmedLine.slice(0, eqIndex).trim()
+      const value = trimmedLine.slice(eqIndex + 1).trim()
+      if (key === 'VITE_SUPABASE_URL' && !process.env.SUPABASE_URL) {
+        process.env.SUPABASE_URL = value
+      }
+      if (key === 'VITE_SUPABASE_ANON_KEY' && !process.env.SUPABASE_ANON_KEY) {
+        process.env.SUPABASE_ANON_KEY = value
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ .env 파일을 읽지 못했어요. AI 도우미의 예약 조회 기능이 제한될 수 있어요.', error.message)
+  }
+}
+
+loadFrontendEnv()
+
+const SUPABASE_URL = process.env.SUPABASE_URL || ''
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ''
+// RLS(행 단위 보안)는 익명 키로 다른 사람 예약을 못 보게 막아놓아서, 서버(AI 도우미)에서만 이 키를 써야 RLS를 우회해 읽을 수 있다.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+const SUPABASE_SERVER_KEY = SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
+
+const NUMERIC_ROOM_CODE_MAP = { 1: 'A', 2: 'B', 3: 'C', 4: 'D' }
+function roomNumericIdToName(numericId) {
+  const code = NUMERIC_ROOM_CODE_MAP[String(numericId)]
+  return code ? `스터디룸 ${code}` : `방 ${numericId}`
+}
+
+const ROOM_CODE_TO_NUMERIC_ID = { A: 1, B: 2, C: 3, D: 4 }
+
+const RESERVATION_STATUS_LABELS = {
+  pending: '대기 중',
+  approved: '승인됨',
+  rejected: '거부됨',
+  checked_in: '입실 중',
+  completed: '이용 완료',
+}
+
+// AI 도우미에서 실제 예약을 보여줘야 하니까, 진짜 데이터가 있는 Supabase에 직접 물어본다 (모의 서버 자체 저장소가 아님).
+async function fetchUpcomingReservationsFromSupabase(userId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY || !userId) {
+    return null
+  }
+
+  try {
+    const today = getKoreaDateParts()
+    const todayStr = `${today.year}-${today.month}-${today.day}`
+    const latestDate = addKoreaDays(7)
+    const latestDateStr = `${latestDate.year}-${latestDate.month}-${latestDate.day}`
+    const url =
+      `${SUPABASE_URL}/rest/v1/reservations` +
+      `?select=room_id,date,start_time,end_time,status` +
+      `&user_id=eq.${encodeURIComponent(userId)}` +
+      `&date=gte.${todayStr}` +
+      `&date=lte.${latestDateStr}` +
+      `&status=neq.rejected` +
+      `&order=date.asc,start_time.asc`
+
+    const response = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVER_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVER_KEY}`,
+      },
+    })
+
+    if (!response.ok) {
+      console.error('Supabase 예약 조회 실패:', response.status)
+      return null
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error('Supabase 예약 조회 오류:', error)
+    return null
+  }
+}
+
+async function buildMyReservationsReply(userId) {
+  if (!userId) {
+    return '로그인 정보가 없어서 예약 내역을 확인할 수 없어요. 로그인 후 다시 물어봐주세요.'
+  }
+
+  const reservations = await fetchUpcomingReservationsFromSupabase(userId)
+
+  if (reservations === null) {
+    return '예약 데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'
+  }
+
+  if (reservations.length === 0) {
+    return '예정된 예약이 없어요. 홈 화면에서 방을 선택해 새로 예약해보세요!'
+  }
+
+  const lines = reservations.map((r) => {
+    const roomName = roomNumericIdToName(r.room_id)
+    const statusLabel = RESERVATION_STATUS_LABELS[r.status] || r.status
+    return `- ${roomName} | ${r.date} ${r.start_time}~${r.end_time} | ${statusLabel}`
+  })
+
+  return `예정된 예약이에요:\n${lines.join('\n')}`
+}
+
+// 다른 사람 정보 보호를 위해 시간대만 익명으로 보여준다 (사용자/목적은 제외).
+async function fetchRoomReservationsFromSupabase(numericRoomId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
+    return null
+  }
+
+  try {
+    const today = getKoreaDateParts()
+    const todayStr = `${today.year}-${today.month}-${today.day}`
+    const latestDate = addKoreaDays(7)
+    const latestDateStr = `${latestDate.year}-${latestDate.month}-${latestDate.day}`
+    const url =
+      `${SUPABASE_URL}/rest/v1/reservations` +
+      `?select=date,start_time,end_time` +
+      `&room_id=eq.${numericRoomId}` +
+      `&date=gte.${todayStr}` +
+      `&date=lte.${latestDateStr}` +
+      `&status=neq.rejected` +
+      `&order=date.asc,start_time.asc`
+
+    const response = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVER_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVER_KEY}`,
+      },
+    })
+
+    if (!response.ok) {
+      console.error('Supabase 방별 예약 조회 실패:', response.status)
+      return null
+    }
+
+    return await response.json()
+  } catch (error) {
+    console.error('Supabase 방별 예약 조회 오류:', error)
+    return null
+  }
+}
+
+async function buildRoomReservationsReply(roomCode) {
+  const numericRoomId = ROOM_CODE_TO_NUMERIC_ID[roomCode]
+  const roomName = `스터디룸 ${roomCode}`
+
+  if (!numericRoomId) {
+    return '방 정보를 확인할 수 없어요. "A룸", "B룸"처럼 말씀해주세요.'
+  }
+
+  const reservations = await fetchRoomReservationsFromSupabase(numericRoomId)
+
+  if (reservations === null) {
+    return '예약 데이터를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'
+  }
+
+  if (reservations.length === 0) {
+    return `${roomName}는 앞으로 예정된 예약이 없어요. 지금 바로 예약할 수 있어요!`
+  }
+
+  const lines = reservations.map((r) => `- ${r.date} ${r.start_time}~${r.end_time}`)
+  return `${roomName}의 예정된 예약 시간대예요 (개인정보 보호를 위해 시간만 보여드려요):\n${lines.join('\n')}`
+}
+
+// 내 학급의 누적 패널티를 구한다 (같은 class_name의 모든 학생 점수를 합산).
+async function fetchMyClassPenaltySummary(userId) {
+  if (!SUPABASE_URL || !SUPABASE_SERVER_KEY || !userId) {
+    return null
+  }
+
+  try {
+    const profileUrl = `${SUPABASE_URL}/rest/v1/profiles?select=class_name&id=eq.${encodeURIComponent(userId)}`
+    const profileRes = await fetch(profileUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!profileRes.ok) {
+      console.error('Supabase 프로필 조회 실패:', profileRes.status)
+      return null
+    }
+    const profiles = await profileRes.json()
+    const className = profiles?.[0]?.class_name
+    if (!className) {
+      return { className: null, totalPoints: 0 }
+    }
+
+    const classmatesUrl = `${SUPABASE_URL}/rest/v1/profiles?select=id&class_name=eq.${encodeURIComponent(className)}`
+    const classmatesRes = await fetch(classmatesUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!classmatesRes.ok) {
+      console.error('Supabase 같은 반 조회 실패:', classmatesRes.status)
+      return null
+    }
+    const classmates = await classmatesRes.json()
+    const ids = classmates.map((c) => c.id)
+    if (ids.length === 0) {
+      return { className, totalPoints: 0 }
+    }
+
+    const penaltiesUrl = `${SUPABASE_URL}/rest/v1/penalties?select=points&user_id=in.(${ids.join(',')})`
+    const penaltiesRes = await fetch(penaltiesUrl, {
+      headers: { apikey: SUPABASE_SERVER_KEY, Authorization: `Bearer ${SUPABASE_SERVER_KEY}` },
+    })
+    if (!penaltiesRes.ok) {
+      console.error('Supabase 패널티 조회 실패:', penaltiesRes.status)
+      return null
+    }
+    const penalties = await penaltiesRes.json()
+    const totalPoints = penalties.reduce((sum, p) => sum + (p.points || 0), 0)
+
+    return { className, totalPoints }
+  } catch (error) {
+    console.error('Supabase 패널티 조회 오류:', error)
+    return null
+  }
+}
+
+async function buildPenaltyReply(userId) {
+  if (!userId) {
+    return '로그인 정보가 없어서 패널티 점수를 확인할 수 없어요. 로그인 후 다시 물어봐주세요.'
+  }
+
+  const summary = await fetchMyClassPenaltySummary(userId)
+
+  if (summary === null) {
+    return '패널티 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.'
+  }
+
+  if (!summary.className) {
+    return '학급 정보가 없어서 패널티 점수를 확인할 수 없어요. 관리자에게 문의해주세요.'
+  }
+
+  const { className, totalPoints } = summary
+  if (totalPoints >= 10) {
+    return `${className}은 패널티 누적 ${totalPoints}점으로 1주일간 이용이 제한된 상태예요.`
+  }
+
+  return `${className}의 누적 패널티는 ${totalPoints}점이에요. (10점이 되면 1주일간 이용이 제한돼요)`
+}
+
 function getConnectionString() {
   const connectionString = process.env.AZURE_POSTGRES_CONNECTION_STRING
   if (!connectionString) {
@@ -426,11 +678,15 @@ const RESERVATION_SYSTEM_PROMPT = `
 `.trim()
 
 // 모의 응답 함수
-function handleAssistantRequest(body) {
+async function handleAssistantRequest(body) {
   const message = body?.message || ''
   const history = body?.history || []
   const userId = body?.userId || body?.user_id || null
   const trimmedMessage = message.trim()
+
+  if (/^(안녕|안녕하세요|하이|hello|hi)[!！.。\s]*$/i.test(trimmedMessage)) {
+    return '안녕하세요! 스터디룸 예약, 공간 현황, 입실·퇴실에 대해 도와드릴게요. 무엇이 궁금한가요?'
+  }
 
   console.log(`📨 사용자 메시지: "${message}"`)
   console.log(`📌 예약 정책 적용 중: ${RESERVATION_SYSTEM_PROMPT.split('\n')[0]}`)
@@ -482,6 +738,29 @@ function handleAssistantRequest(body) {
   const isAwaitingMembers = /몇\s*명이서\s*사용할\s*거예요/.test(lastAssistantMessage)
   const isAwaitingPurpose = /사용\s*목적/.test(lastAssistantMessage)
 
+  // 내 예약 내역 질문은 예약 흐름(방/날짜/시간 수집)보다 먼저 처리해야 함
+  const isMyReservationQuestion = /(내|내가|제|제가|나의)\s*예약/i.test(trimmedMessage)
+  if (isMyReservationQuestion) {
+    console.log(`📄 내 예약 내역 질문입니다.`)
+    return await buildMyReservationsReply(userId)
+  }
+
+  // 특정 방 이름이 언급되고 정보성 질문이면 그 방의 예약 시간대를 알려준다 (새 예약 시작은 제외)
+  const mentionedRoomCodeForHistory = extractRoomCodeFromText(trimmedMessage, false)
+  const isRoomHistoryQuestion =
+    mentionedRoomCodeForHistory && !isActionReservation && (isInfoQuestion || /내역/.test(trimmedMessage))
+  if (isRoomHistoryQuestion) {
+    console.log(`📄 ${mentionedRoomCodeForHistory}룸 예약 내역 질문입니다.`)
+    return await buildRoomReservationsReply(mentionedRoomCodeForHistory)
+  }
+
+  // 패널티 점수 질문도 예약 흐름보다 먼저 처리
+  const isPenaltyQuestion = /패널티/i.test(trimmedMessage)
+  if (isPenaltyQuestion) {
+    console.log(`📄 패널티 점수 질문입니다.`)
+    return await buildPenaltyReply(userId)
+  }
+
   // 정보 질문인 경우
   if (isInfoQuestion && !isActionReservation && !hasReservationContext) {
     console.log(`ℹ️  공실 확인 질문입니다.`)
@@ -491,7 +770,7 @@ function handleAssistantRequest(body) {
   // 예약도 정보도 아닌 기타 질문인 경우 (단, 대화 컨텍스트 무시)
   if (!isActionReservation && !isInfoQuestion && !hasReservationContext) {
     console.log(`ℹ️  기타 질문입니다.`)
-    return '무엇을 도와드릴까요? 공간 현황을 확인하거나 예약을 하고 싶으시다면 알려주세요!'
+    return '저는 스터디룸 예약, 공간 현황, 입실·퇴실, 패널티 관련 질문을 도와드릴 수 있어요. 해당 내용으로 다시 질문해주세요.'
   }
 
   // ===== 예약 프로세스 시작 =====
@@ -633,6 +912,12 @@ function handleAssistantRequest(body) {
     month = String(lastMonthDayMatch[1]).padStart(2, '0')
     day = String(lastMonthDayMatch[2]).padStart(2, '0')
   }
+
+  // 현재 메시지에 시간이 1개만 있고 범위 표현이 없으면, 대화 단계에 맞게 보정
+  // - 시작 시간 단계: 단일 시간을 시작 시간으로 처리
+  // - 종료 시간 단계: 단일 시간을 종료 시간으로 처리
+  const hasTimeInCurrentMessage = /(\d{1,2}):?(\d{2})?\s*시/.test(message)
+  const hasRangeMarker = /(부터|까지|~|-)\s*/.test(message)
 
   // 시간 추출 (오전/오후 처리)
   let startTime = null
@@ -839,17 +1124,11 @@ function handleAssistantRequest(body) {
     return null
   }
 
-  // 현재 메시지에 시간이 1개만 있고 범위 표현이 없으면, 대화 단계에 맞게 보정
-  // - 시작 시간 단계: 단일 시간을 시작 시간으로 처리
-  // - 종료 시간 단계: 단일 시간을 종료 시간으로 처리
-  // (히스토리 시간과 합쳐져 시작/종료가 바뀌는 문제 방지)
-  const currentTimeCount = (message.match(/(\d{1,2}):?(\d{2})?시/g) || []).length
-  const hasRangeMarker = /(부터|까지|~|-)\s*/.test(message)
-  const hasTimeInCurrentMessage = /(\d{1,2}):?(\d{2})?\s*시/.test(message)
-  const previousStartMatch = lastAssistantMessage.match(/(\d{1,2}:\d{2})부터 시작/)
-
   // 종료 시간 입력 단계에서는 현재 메시지의 시간만 종료 시간으로 인정한다.
   // (히스토리 시간 재조합으로 22:00~23:00 같은 잘못된 값이 생기는 문제 방지)
+  const currentTimeCount = (message.match(/(\d{1,2}):?(\d{2})?시/g) || []).length
+  const previousStartMatch = lastAssistantMessage.match(/(\d{1,2}:\d{2})부터 시작/)
+
   if (isAwaitingEndTime) {
     if (previousStartMatch) {
       startTime = previousStartMatch[1]
@@ -1069,8 +1348,28 @@ const server = http.createServer(async (req, res) => {
     })
     req.on('end', async () => {
       try {
-        const data = JSON.parse(body)
-        let reply = handleAssistantRequest(data)
+        if (!body || body.trim() === '') {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: '요청 본문이 비어있습니다' }))
+          return
+        }
+
+        let data
+        try {
+          data = JSON.parse(body)
+        } catch (parseError) {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'JSON 형식이 잘못되었습니다: ' + parseError.message }))
+          return
+        }
+
+        if (!data.message || typeof data.message !== 'string') {
+          res.writeHead(400)
+          res.end(JSON.stringify({ error: 'message 필드는 필수입니다' }))
+          return
+        }
+
+        let reply = await handleAssistantRequest(data)
 
         // JSON 형식의 예약 요청인지 확인
         let reservationData = null
@@ -1086,6 +1385,7 @@ const server = http.createServer(async (req, res) => {
         // 예약 JSON이면 실제로 /api/reserve 호출
         if (reservationData) {
           try {
+            console.log(`📤 /api/reserve로 예약 요청 전송:`, JSON.stringify(reservationData, null, 2))
             const reserveResponse = await fetch('http://localhost:7071/api/reserve', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -1100,14 +1400,18 @@ const server = http.createServer(async (req, res) => {
               }),
             })
 
+            console.log(`📥 /api/reserve 응답 상태: ${reserveResponse.status}`)
             if (reserveResponse.ok) {
               const reserveResult = await reserveResponse.json()
+              console.log(`✅ 예약 완료: ${reserveResult.reservationId}`)
               reply = `✅ 예약이 완료되었습니다!\n\n예약 번호: #${reserveResult.reservationId}\n날짜: ${reservationData.date}\n시간: ${reservationData.start_time} ~ ${reservationData.end_time}\n인원: ${reservationData.members_count}명\n\n상태: 담당자 승인 대기 중입니다. 승인 후 입실 버튼이 활성화됩니다.`
             } else {
               const errorData = await reserveResponse.json()
+              console.log(`⚠️  /api/reserve 에러: ${errorData.error}`)
               reply = `⚠️ 예약 중 문제가 발생했습니다.\n\n이유: ${errorData.error || '알 수 없는 오류'}\n\n다시 시도하거나 담당자에게 문의해주세요.`
             }
           } catch (reserveError) {
+            console.error(`❌ 예약 시스템 오류:`, reserveError)
             reply = `❌ 예약 시스템 오류: ${reserveError.message}\n\n잠시 후 다시 시도해주세요.`
           }
         }

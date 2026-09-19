@@ -11,6 +11,25 @@ const STATUS_CONFIG = {
   completed:  { label: '🏁 이용 완료', border: 'border-l-slate-300',  badge: 'bg-slate-50 text-slate-500' },
 }
 
+function formatLocalDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function formatLocalTime(date) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function isCheckInAvailable(reservation, currentTime) {
+  if (reservation.status !== 'approved' || reservation.date !== formatLocalDate(currentTime)) {
+    return false
+  }
+
+  const currentTimeText = formatLocalTime(currentTime)
+  const startTime = String(reservation.start_time || '').slice(0, 5)
+  const endTime = String(reservation.end_time || '').slice(0, 5)
+  return startTime <= currentTimeText && currentTimeText < endTime
+}
+
 function MyPage() {
   const [reservations, setReservations] = useState([])
   const [penalties, setPenalties] = useState([])
@@ -21,6 +40,7 @@ function MyPage() {
   const [classInput, setClassInput] = useState('')
   const [userName, setUserName] = useState('')
   const [editingClass, setEditingClass] = useState(false)
+  const [currentTime, setCurrentTime] = useState(new Date())
   const [reservationSourceInfo, setReservationSourceInfo] = useState({ source: '', fallbackReason: null })
 
   function getSurveyDoneMap() {
@@ -38,6 +58,11 @@ function MyPage() {
   }
 
   useEffect(() => { fetchMyData() }, [])
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000)
+    return () => clearInterval(timer)
+  }, [])
 
   async function fetchMyData() {
     try {
@@ -83,6 +108,11 @@ function MyPage() {
 
   async function handleCheckIn(reservation) {
     trackInteraction('reservation_checkin_click', { reservationId: reservation.id })
+    if (!isCheckInAvailable(reservation, currentTime)) {
+      alert('예약 날짜와 시간에만 입실할 수 있어요.')
+      return
+    }
+
     try {
       await trackApiCall('rooms:update_occupied', () => updateRoomStatus(reservation.room_id, 'occupied'))
       await updateReservationStatus(reservation.id, 'checked_in')
@@ -222,6 +252,7 @@ function MyPage() {
           <div className="space-y-4">
             {reservations.map((r) => {
               const cfg = STATUS_CONFIG[r.status] || STATUS_CONFIG.pending
+              const canCheckIn = isCheckInAvailable(r, currentTime)
               return (
                 <div key={r.id} className={`bg-white rounded-xl border border-slate-200 border-l-4 shadow-sm px-5 py-4 ${cfg.border}`}>
                   <div className="flex justify-between items-start mb-3">
@@ -237,11 +268,14 @@ function MyPage() {
                   </div>
 
                   {/* 입실 버튼 */}
-                  {r.status === 'approved' && (
+                  {r.status === 'approved' && canCheckIn && (
                     <button onClick={() => handleCheckIn(r)}
                       className="mt-3 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors">
                       입실
                     </button>
+                  )}
+                  {r.status === 'approved' && !canCheckIn && (
+                    <p className="mt-3 text-xs text-slate-500">예약한 날짜와 시간에 입실 버튼이 표시돼요.</p>
                   )}
 
                   {/* 퇴실 버튼 */}

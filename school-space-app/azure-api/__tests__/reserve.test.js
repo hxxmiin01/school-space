@@ -15,6 +15,7 @@ describe('Reserve API', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    jest.useFakeTimers().setSystemTime(new Date('2025-02-13T00:00:00'))
     process.env.AZURE_POSTGRES_CONNECTION_STRING = 'mock://connection'
 
     // 기본 mock 설정
@@ -25,6 +26,10 @@ describe('Reserve API', () => {
     context = {
       res: null,
     }
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
   })
 
   test('should successfully create a reservation', async () => {
@@ -138,6 +143,46 @@ describe('Reserve API', () => {
 
     expect(context.res.status).toBe(400)
     expect(context.res.body.error).toContain('required')
+  })
+
+  test('should reject reservations outside operating hours', async () => {
+    const req = {
+      body: {
+        roomId: 1,
+        date: '2025-02-15',
+        startTime: '07:00',
+        endTime: '08:00',
+        membersCount: 3,
+        purpose: '수학 공부',
+        userId: 'user123',
+      },
+    }
+
+    await reserveFunction(context, req)
+
+    expect(context.res.status).toBe(400)
+    expect(context.res.body.error).toContain('오전 8시부터 오후 10시까지')
+    expect(mockConnect).not.toHaveBeenCalled()
+  })
+
+  test('should reject reservations more than seven days ahead', async () => {
+    const req = {
+      body: {
+        roomId: 1,
+        date: '2025-02-21',
+        startTime: '09:00',
+        endTime: '10:00',
+        membersCount: 3,
+        purpose: '수학 공부',
+        userId: 'user123',
+      },
+    }
+
+    await reserveFunction(context, req)
+
+    expect(context.res.status).toBe(400)
+    expect(context.res.body.error).toContain('오늘부터 일주일 이내')
+    expect(mockConnect).not.toHaveBeenCalled()
   })
 
   test('should include full reservation data in response', async () => {
