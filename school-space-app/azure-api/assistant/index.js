@@ -112,6 +112,85 @@ module.exports = async function (context, req) {
     return response.json()
   }
 
+  async function fetchUserPenalties() {
+    const supabaseUrl = process.env.SUPABASE_URL
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    if (!supabaseUrl || !supabaseServiceRoleKey || !userId) {
+      return []
+    }
+
+    const url = `${supabaseUrl}/rest/v1/penalties?select=reason,created_at,points&user_id=eq.${encodeURIComponent(userId)}&order=created_at.desc`
+    const response = await fetch(url, {
+      headers: {
+        apikey: supabaseServiceRoleKey,
+        Authorization: `Bearer ${supabaseServiceRoleKey}`,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Supabase 패널티 조회 실패: ${response.status}`)
+    }
+
+    return response.json()
+  }
+
+  function toKoreaDateText(offsetDays = 0) {
+    const date = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000)
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date)
+    const values = Object.fromEntries(parts.filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]))
+    return `${values.year}-${values.month}-${values.day}`
+  }
+
+  function parseTime(period, hourText, koreanMinuteText, colonMinuteText) {
+    let hour = Number(hourText)
+    const minute = Number(koreanMinuteText ?? colonMinuteText ?? 0)
+    if (period === '오후' && hour < 12) hour += 12
+    if (period === '오전' && hour === 12) hour = 0
+    if (hour > 23 || minute > 59) return null
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+  }
+
+  function extractAvailabilityRequest(texts) {
+    const combined = texts.filter(Boolean).join(' ')
+    const roomMatch = combined.match(/(?:스터디룸|study\s*room|room|방)\s*([A-D])|\b([A-D])\s*(?:룸|방|room)/i)
+    const roomCode = (roomMatch?.[1] || roomMatch?.[2] || '').toUpperCase()
+    const roomId = { A: 1, B: 2, C: 3, D: 4 }[roomCode]
+    if (!roomId) return null
+
+    const exactDate = combined.match(/\b(20\d{2}-\d{1,2}-\d{1,2})\b/)
+    const relativeDate = combined.match(/오늘|내일|모레|글피/)
+    const relativeOffsets = { 오늘: 0, 내일: 1, 모레: 2, 글피: 3 }
+    const date = exactDate
+      ? exactDate[1]
+      : relativeDate
+        ? toKoreaDateText(relativeOffsets[relativeDate[0]])
+        : null
+
+    const timeMatches = [...combined.matchAll(/(오전|오후)?\s*(\d{1,2})(?:시\s*(\d{1,2})분?|:(\d{2}))/gi)]
+    const times = timeMatches
+      .map((match) => parseTime(match[1], match[2], match[3], match[4]))
+      .filter(Boolean)
+      .slice(0, 2)
+
+    if (!date || times.length < 2) return null
+    return { roomId, date, startTime: times[0], endTime: times[1] }
+  }
+
+  async function fetchAvailability(request) {
+    const url = new URL(`${getFunctionsBaseUrl()}/api/availability`)
+    Object.entries(request).forEach(([key, value]) => url.searchParams.set(key, value))
+    const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`예약 가능 여부 조회 실패: ${response.status}`)
+    }
+    return response.json()
+  }
+
   try {
     let reservationContext = ''
     try {
@@ -136,6 +215,40 @@ module.exports = async function (context, req) {
       } catch (error) {
         roomStatusContext = '\n현재 스터디룸 상태를 조회하지 못했으므로 공실 여부를 단정하지 않는다.\n'
         console.warn('AI 도우미가 스터디룸 상태를 읽지 못했어요.', error.message)
+      }
+    }
+
+    let penaltyContext = ''
+    const isPenaltyQuestion = /패널티|벌점|제재|이용\s*제한/i.test(message)
+    if (isPenaltyQuestion) {
+      try {
+        const penalties = await fetchUserPenalties()
+        const totalPoints = penalties.reduce((sum, penalty) => sum + Number(penalty.points || 0), 0)
+        if (penalties.length === 0) {
+          penaltyContext = '\n사용자의 실제 패널티 데이터(Supabase): 기록 없음, 누적 0점\n'
+        } else {
+          penaltyContext = `\n사용자의 실제 패널티 데이터(Supabase):\n- 누적 점수: ${totalPoints}점\n${penalties
+            .map((penalty) => `- ${String(penalty.created_at || '').slice(0, 10)} | ${penalty.points}점 | 사유: ${penalty.reason || '사유 없음'}`)
+            .join('\n')}\n`
+        }
+      } catch (error) {
+        penaltyContext = '\n사용자의 패널티 데이터를 조회하지 못했으므로 점수나 기록을 추측하지 않는다.\n'
+        console.warn('AI 도우미가 Supabase 패널티 데이터를 읽지 못했어요.', error.message)
+      }
+    }
+
+    let availabilityContext = ''
+    const availabilityRequest = extractAvailabilityRequest([
+      ...history.filter((turn) => turn.role === 'user').map((turn) => turn.text),
+      message,
+    ])
+    if (availabilityRequest) {
+      try {
+        const availability = await fetchAvailability(availabilityRequest)
+        availabilityContext = `\n실제 예약 가능 여부 데이터:\n- 방 ID: ${availabilityRequest.roomId}\n- 날짜: ${availabilityRequest.date}\n- 시간: ${availabilityRequest.startTime}~${availabilityRequest.endTime}\n- 예약 가능: ${availability.available ? '가능' : '불가능'}\n- 사유: ${availability.reason || '없음'}\n`
+      } catch (error) {
+        availabilityContext = '\n요청한 날짜와 시간의 예약 가능 여부를 조회하지 못했으므로 가능하다고 단정하지 않는다.\n'
+        console.warn('AI 도우미가 예약 가능 여부를 읽지 못했어요.', error.message)
       }
     }
 
@@ -198,6 +311,8 @@ module.exports = async function (context, req) {
 패널티 시스템:
 - 룸 정리 미흡 또는 물품 훼손 시 1~10점 패널티
 - 누적 10점이 되면 1주일간 예약 불가능
+- 패널티 관련 질문에는 아래의 실제 Supabase 패널티 데이터만 사용하고, 데이터가 없으면 누적 0점/기록 없음으로 답한다.
+- 실제 예약 가능 여부 데이터가 있으면 그 결과를 반드시 우선 사용한다. 예약 가능이 불가능이면 예약 가능하다고 말하거나 예약 JSON을 만들지 않는다.
 
 예약 정보 수집:
 사용자가 예약을 요청하면 다음 정보를 수집한다:
@@ -241,7 +356,7 @@ module.exports = async function (context, req) {
 - 종료 시간은 시작 시간보다 늦어야 하지만, 사용자가 수정 답변을 보냈다면 그 시간 값을 먼저 반영하고 나서만 검증한다.
 - 같은 질문을 연속해서 반복하지 말고, 방금 받은 답이 어느 칸에 들어가는지 먼저 판단한다.
 
-${reservationContext}${roomStatusContext}\n${conversationContext}사용자: ${message}`
+${reservationContext}${roomStatusContext}${penaltyContext}${availabilityContext}\n${conversationContext}사용자: ${message}`
 
     // Foundry API 호출 (Responses API 형식)
     const response = await fetch(endpoint, {

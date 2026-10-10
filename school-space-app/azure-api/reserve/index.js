@@ -1,5 +1,122 @@
 const { Client } = require('pg')
 
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !key) {
+    return null
+  }
+
+  return { url: url.replace(/\/$/, ''), key }
+}
+
+async function supabaseRequest(resource, searchParams, options = {}) {
+  const config = getSupabaseConfig()
+  if (!config) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.')
+  }
+
+  const url = new URL(`${config.url}/rest/v1/${resource}`)
+  Object.entries(searchParams || {}).forEach(([key, value]) => {
+    url.searchParams.set(key, value)
+  })
+
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      apikey: config.key,
+      Authorization: `Bearer ${config.key}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    throw new Error(`Supabase request failed: ${response.status} ${errorBody}`)
+  }
+
+  return response.status === 204 ? [] : response.json()
+}
+
+async function createReservationInSupabase({ roomId, date, startTime, endTime, membersCount, purpose, userId }) {
+  const conflicts = await supabaseRequest('reservations', {
+    select: 'id',
+    room_id: `eq.${roomId}`,
+    date: `eq.${date}`,
+    status: 'in.(approved,pending)',
+    start_time: `lt.${endTime}`,
+    end_time: `gt.${startTime}`,
+  })
+
+  if (conflicts.length > 0) {
+    return {
+      status: 409,
+      body: { success: false, error: '해당 시간대는 이미 예약되어 있습니다.' },
+    }
+  }
+
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const penalties = await supabaseRequest('penalties', {
+    select: 'points',
+    user_id: `eq.${userId}`,
+    created_at: `gt.${cutoff}`,
+  })
+  const totalPenalty = penalties.reduce((sum, penalty) => sum + Number(penalty.points || 0), 0)
+
+  if (totalPenalty >= 10) {
+    return {
+      status: 403,
+      body: {
+        success: false,
+        error: '누적 패널티가 10점 이상이어서 1주일간 예약이 제한됩니다.',
+        totalPenalty,
+      },
+    }
+  }
+
+  const insertedRows = await supabaseRequest(
+    'reservations',
+    {},
+    {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({
+        room_id: Number(roomId),
+        user_id: userId,
+        date,
+        start_time: startTime,
+        end_time: endTime,
+        members_count: membersCount,
+        purpose,
+        status: 'pending',
+      }),
+    }
+  )
+
+  const reservationId = insertedRows[0]?.id
+  return {
+    status: 201,
+    body: {
+      success: true,
+      reservationId,
+      message: '예약이 생성되었습니다. 담당자의 승인을 기다려주세요.',
+      reservation: {
+        id: reservationId,
+        roomId: Number(roomId),
+        userId,
+        date,
+        startTime,
+        endTime,
+        membersCount,
+        purpose,
+        status: 'pending',
+      },
+    },
+  }
+}
+
 function createClient() {
   const connectionString = process.env.AZURE_POSTGRES_CONNECTION_STRING
 
@@ -14,8 +131,8 @@ function createClient() {
 }
 
 module.exports = async function (context, req) {
-  const client = createClient()
-  const { roomId, date, startTime, endTime, membersCount, purpose, userId } = req.body
+  let client = null
+  const { roomId, date, startTime, endTime, membersCount, purpose, userId } = req.body || {}
 
   // 파라미터 검증
   if (!roomId || !date || !startTime || !endTime || !membersCount || !purpose || !userId) {
@@ -61,6 +178,25 @@ module.exports = async function (context, req) {
   }
 
   try {
+    if (getSupabaseConfig()) {
+      const result = await createReservationInSupabase({
+        roomId,
+        date,
+        startTime,
+        endTime,
+        membersCount,
+        purpose,
+        userId,
+      })
+      context.res = {
+        status: result.status,
+        headers: { 'Content-Type': 'application/json' },
+        body: result.body,
+      }
+      return
+    }
+
+    client = createClient()
     await client.connect()
 
     // 1. 해당 시간대에 겹치는 예약이 있는지 확인

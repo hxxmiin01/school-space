@@ -219,6 +219,80 @@ describe('Assistant API (Foundry)', () => {
     expect(foundryBody.input).toContain('study-room-2: occupied')
   })
 
+  test('should include the user penalties read from Supabase in the Foundry prompt', async () => {
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([
+          { reason: '정리 미흡', created_at: '2026-10-09T10:00:00Z', points: 3 },
+        ]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: [{ content: [{ text: '현재 누적 패널티는 3점이에요.' }] }],
+        }),
+      })
+
+    process.env.SUPABASE_URL = 'https://example.supabase.co'
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-test-key'
+
+    await assistantFunction(context, {
+      body: {
+        message: '내 패널티 목록 알려줘',
+        history: [],
+        userId: 'user-123',
+      },
+    })
+
+    const foundryBody = JSON.parse(global.fetch.mock.calls[2][1].body)
+    expect(global.fetch.mock.calls[1][0]).toContain('https://example.supabase.co/rest/v1/penalties')
+    expect(foundryBody.input).toContain('누적 점수: 3점')
+    expect(foundryBody.input).toContain('정리 미흡')
+  })
+
+  test('should include live availability when a room, date, and time are provided', async () => {
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          available: false,
+          roomId: 1,
+          date: '2026-10-12',
+          startTime: '18:00',
+          endTime: '19:00',
+          reason: '해당 시간대는 이미 예약되어 있습니다.',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          output: [{ content: [{ text: '해당 시간은 예약되어 있어요.' }] }],
+        }),
+      })
+
+    await assistantFunction(context, {
+      headers: { host: 'school-space-api2-9726.azurewebsites.net' },
+      body: {
+        message: '스터디룸 A, 2026-10-12 18:00부터 19:00까지 예약 가능해?',
+        history: [],
+      },
+    })
+
+    expect(global.fetch.mock.calls[0][0].toString()).toContain(
+      'https://school-space-api2-9726.azurewebsites.net/api/availability',
+    )
+    expect(global.fetch.mock.calls[0][0].toString()).toContain('roomId=1')
+    expect(global.fetch.mock.calls[0][0].toString()).toContain('startTime=18%3A00')
+    const foundryBody = JSON.parse(global.fetch.mock.calls[1][1].body)
+    expect(foundryBody.input).toContain('예약 가능: 불가능')
+    expect(foundryBody.input).toContain('해당 시간대는 이미 예약되어 있습니다.')
+  })
+
   // ===== 에러 처리 테스트 =====
 
   test('should return 400 error when message is empty', async () => {

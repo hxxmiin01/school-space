@@ -1,5 +1,16 @@
 const { Client } = require('pg')
 
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !key) {
+    return null
+  }
+
+  return { url: url.replace(/\/$/, ''), key }
+}
+
 function createClient() {
   const connectionString = process.env.AZURE_POSTGRES_CONNECTION_STRING
 
@@ -14,8 +25,8 @@ function createClient() {
 }
 
 module.exports = async function (context, req) {
-  const client = createClient()
-  const { roomId, date, startTime, endTime } = req.query
+  let client = null
+  const { roomId, date, startTime, endTime } = req.query || {}
 
   // 파라미터 검증
   if (!roomId || !date || !startTime || !endTime) {
@@ -30,6 +41,45 @@ module.exports = async function (context, req) {
   }
 
   try {
+    if (getSupabaseConfig()) {
+      const config = getSupabaseConfig()
+      const url = new URL(`${config.url}/rest/v1/reservations`)
+      url.searchParams.set('select', 'id')
+      url.searchParams.set('room_id', `eq.${roomId}`)
+      url.searchParams.set('date', `eq.${date}`)
+      url.searchParams.set('status', 'in.(approved,pending)')
+      url.searchParams.set('start_time', `lt.${endTime}`)
+      url.searchParams.set('end_time', `gt.${startTime}`)
+
+      const response = await fetch(url, {
+        headers: {
+          apikey: config.key,
+          Authorization: `Bearer ${config.key}`,
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`Supabase availability request failed: ${response.status}`)
+      }
+
+      const conflicts = await response.json()
+      const available = conflicts.length === 0
+      context.res = {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          available,
+          roomId: parseInt(roomId, 10),
+          date,
+          startTime,
+          endTime,
+          reason: available ? null : '해당 시간대는 이미 예약되어 있습니다.',
+        },
+      }
+      return
+    }
+
+    client = createClient()
     await client.connect()
 
     // 해당 시간대에 겹치는 예약이 있는지 확인
@@ -69,6 +119,8 @@ module.exports = async function (context, req) {
       body: { error: error.message },
     }
   } finally {
-    await client.end()
+    if (client) {
+      await client.end()
+    }
   }
 }

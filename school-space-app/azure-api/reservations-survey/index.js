@@ -1,5 +1,16 @@
 const { Client } = require('pg')
 
+function getSupabaseConfig() {
+  const url = process.env.SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !key) {
+    return null
+  }
+
+  return { url: url.replace(/\/$/, ''), key }
+}
+
 function createClient() {
   const connectionString = process.env.AZURE_POSTGRES_CONNECTION_STRING
 
@@ -14,7 +25,7 @@ function createClient() {
 }
 
 module.exports = async function (context, req) {
-  const client = createClient()
+  let client = null
   const reservationId = Number(req.params?.id)
   const surveyDone = Boolean(req.body?.survey_done)
 
@@ -28,6 +39,50 @@ module.exports = async function (context, req) {
   }
 
   try {
+    if (getSupabaseConfig()) {
+      const config = getSupabaseConfig()
+      const url = new URL(`${config.url}/rest/v1/reservations`)
+      url.searchParams.set('id', `eq.${reservationId}`)
+      url.searchParams.set('select', 'id,survey_done')
+
+      const response = await fetch(url, {
+        method: 'PATCH',
+        headers: {
+          apikey: config.key,
+          Authorization: `Bearer ${config.key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({ survey_done: surveyDone }),
+      })
+
+      if (!response.ok) {
+        throw new Error(`Supabase reservation survey request failed: ${response.status}`)
+      }
+
+      const rows = await response.json()
+      if (rows.length === 0) {
+        context.res = {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+          body: { error: '예약을 찾을 수 없어요.' },
+        }
+        return
+      }
+
+      context.res = {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          success: true,
+          id: rows[0].id,
+          survey_done: rows[0].survey_done,
+        },
+      }
+      return
+    }
+
+    client = createClient()
     await client.connect()
 
     const result = await client.query(
@@ -65,6 +120,8 @@ module.exports = async function (context, req) {
       body: { error: error.message },
     }
   } finally {
-    await client.end()
+    if (client) {
+      await client.end()
+    }
   }
 }
