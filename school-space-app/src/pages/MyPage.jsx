@@ -11,6 +11,8 @@ const STATUS_CONFIG = {
   completed:  { label: '🏁 이용 완료', border: 'border-l-slate-300',  badge: 'bg-slate-50 text-slate-500' },
 }
 
+const RESERVATIONS_PER_PAGE = 5
+
 function formatLocalDate(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
@@ -41,6 +43,7 @@ function MyPage() {
   const [userName, setUserName] = useState('')
   const [editingClass, setEditingClass] = useState(false)
   const [currentTime, setCurrentTime] = useState(new Date())
+  const [reservationPage, setReservationPage] = useState(1)
 
   function getSurveyDoneMap() {
     try {
@@ -157,20 +160,34 @@ function MyPage() {
 
   const totalPenalty = penalties.reduce((sum, p) => sum + p.points, 0)
   const isRestricted = totalPenalty >= 10
+  const reservationPageCount = Math.max(1, Math.ceil(reservations.length / RESERVATIONS_PER_PAGE))
+  const visibleReservationPage = Math.min(reservationPage, reservationPageCount)
+  const visibleReservations = reservations.slice(
+    (visibleReservationPage - 1) * RESERVATIONS_PER_PAGE,
+    visibleReservationPage * RESERVATIONS_PER_PAGE
+  )
+  const firstVisibleReservation = reservations.length === 0 ? 0 : (visibleReservationPage - 1) * RESERVATIONS_PER_PAGE + 1
+  const lastVisibleReservation = Math.min(visibleReservationPage * RESERVATIONS_PER_PAGE, reservations.length)
 
   if (loading) return (
     <div className="max-w-2xl mx-auto px-4 py-8 text-center text-slate-400">불러오는 중...</div>
   )
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+    <div className="max-w-4xl mx-auto px-4 py-8 space-y-7">
+      <header className="border-b border-slate-200 pb-5">
+        <p className="mb-2 text-xs font-semibold tracking-wide text-slate-400">SCHOOL SPACE · MY PAGE</p>
+        <h1 className="text-[28px] font-semibold leading-8 tracking-tight text-slate-800">마이페이지</h1>
+        <p className="mt-2 text-sm text-slate-500">내 정보와 스터디룸 이용 내역을 확인해요.</p>
+      </header>
 
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {/* 프로필 카드 */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <h1 className="text-lg font-bold text-slate-800 mb-4">마이페이지</h1>
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-4 text-base font-semibold text-slate-800">내 정보</h2>
         <div className="space-y-2 text-sm text-slate-600">
           <p>이름: <span className="font-semibold text-slate-800">{userName || '미설정'}</span></p>
-          <p>계정: <span className="text-slate-500">{userEmail}</span></p>
+          <p className="break-all">계정: <span className="text-slate-500">{userEmail}</span></p>
           <div className="flex items-center gap-2 flex-wrap">
             <span>학급:</span>
             {editingClass ? (
@@ -192,15 +209,15 @@ function MyPage() {
             )}
           </div>
         </div>
-      </div>
+      </section>
 
       {/* 패널티 현황 카드 */}
-      <div className={`bg-white rounded-xl border shadow-sm p-5 border-l-4 ${isRestricted ? 'border-l-red-500' : 'border-l-blue-500'}`}>
-        <h2 className="font-bold text-slate-800 mb-3">패널티 현황</h2>
+      <section className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm ${isRestricted ? 'border-t-2 border-t-red-500' : ''}`}>
+        <h2 className="mb-3 font-semibold text-slate-800">패널티 현황</h2>
         <div className="flex items-center gap-3 mb-3">
           <span className="text-sm text-slate-600">누적 점수</span>
           <span className={`text-lg font-bold ${isRestricted ? 'text-red-600' : 'text-slate-800'}`}>
-            {totalPenalty}점
+            {totalPenalty}
           </span>
           <span className="text-sm text-slate-400">/ 10점</span>
           {isRestricted && (
@@ -208,29 +225,36 @@ function MyPage() {
           )}
         </div>
         {penalties.length > 0 ? (
-          <ul className="space-y-1.5">
+          <ul className="max-h-36 space-y-2 overflow-y-auto border-t border-slate-100 pt-3">
             {penalties.map((p) => (
-              <li key={p.id} className="text-sm text-slate-600 flex justify-between">
-                <span>{new Date(p.created_at).toLocaleDateString()} — {p.reason}</span>
-                <span className="font-semibold text-red-500">+{p.points}점</span>
+              <li key={p.id} className="flex items-start justify-between gap-3 text-xs text-slate-600">
+                <span className="min-w-0"><span className="text-slate-400">{new Date(p.created_at).toLocaleDateString()}</span><span className="ml-2 break-words">{p.reason}</span></span>
+                <span className="shrink-0 font-semibold text-red-500">+{p.points}점</span>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-slate-400">패널티 없음 🎉</p>
+          <p className="border-t border-slate-100 pt-3 text-sm text-slate-400">패널티가 없어요.</p>
         )}
+      </section>
       </div>
 
       {/* 예약 내역 */}
       <div className="pt-2">
-        <h2 className="font-bold text-slate-800 mb-5">내 예약 내역</h2>
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
+          <div>
+            <h2 className="font-bold text-slate-800">내 예약 내역</h2>
+            <p className="mt-1 text-sm text-slate-500">최근 예약부터 확인할 수 있어요.</p>
+          </div>
+          {reservations.length > 0 && <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600">총 {reservations.length}건</span>}
+        </div>
         {reservations.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
             예약 내역이 없어요.
           </div>
         ) : (
-          <div className="space-y-4">
-            {reservations.map((r) => {
+          <div className="space-y-3">
+            {visibleReservations.map((r) => {
               const cfg = STATUS_CONFIG[r.status] || STATUS_CONFIG.pending
               const canCheckIn = isCheckInAvailable(r, currentTime)
               return (
@@ -286,6 +310,18 @@ function MyPage() {
                 </div>
               )
             })}
+          </div>
+        )}
+        {reservations.length > 0 && (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+            <p className="text-xs text-slate-500">{firstVisibleReservation}–{lastVisibleReservation}건 표시 · 전체 {reservations.length}건</p>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => setReservationPage(visibleReservationPage - 1)} disabled={visibleReservationPage === 1}
+                className="min-h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">이전</button>
+              <span className="min-w-14 text-center text-xs text-slate-500">{visibleReservationPage} / {reservationPageCount}</span>
+              <button type="button" onClick={() => setReservationPage(visibleReservationPage + 1)} disabled={visibleReservationPage === reservationPageCount}
+                className="min-h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">다음</button>
+            </div>
           </div>
         )}
       </div>
