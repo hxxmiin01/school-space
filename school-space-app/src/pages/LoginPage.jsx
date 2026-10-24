@@ -113,24 +113,22 @@ function LoginPage() {
     setLoading(false)
   }
 
-  const inputClass = 'w-full px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 caret-slate-800 border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all bg-slate-100 hover:bg-slate-200/70 focus:bg-blue-50'
-  const selectClass = 'flex-1 px-3 py-3 text-sm text-slate-800 border border-slate-300 rounded-xl outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-100 transition-all bg-slate-100 hover:bg-slate-200/70 focus:bg-blue-50'
+  const inputClass = 'w-full rounded-lg border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition-colors focus:border-slate-500 focus:ring-4 focus:ring-slate-100'
+  const selectClass = 'min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition-colors focus:border-slate-500 focus:ring-4 focus:ring-slate-100'
+  const isSuccessMessage = errorMsg.startsWith('✅') || errorMsg.startsWith('📩')
 
   return (
-    <div className="min-h-screen px-4 flex items-center justify-center bg-[radial-gradient(circle_at_15%_12%,rgba(59,130,246,0.22),transparent_35%),radial-gradient(circle_at_87%_18%,rgba(14,165,233,0.2),transparent_30%),linear-gradient(180deg,#f8fbff_0%,#f3f7ff_48%,#eef3ff_100%)]">
-      <div className="w-full max-w-md rounded-3xl border border-white/70 bg-white/86 backdrop-blur shadow-[0_22px_60px_rgba(15,23,42,0.16)] p-7 sm:p-8">
-        <div className="text-center mb-7">
-          <p className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold tracking-wide text-blue-700 bg-blue-50 border border-blue-100">
-            STUDY SPACE ACCESS
-          </p>
-          <div className="text-4xl mt-3 mb-3">🏫</div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-800">스쿨스페이스</h1>
+    <main className="flex min-h-screen items-center justify-center bg-[#F7F8FA] px-4 py-10">
+      <div className="w-full max-w-[420px] rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_8px_28px_rgba(16,24,40,0.06)] sm:p-8">
+        <div className="mb-7 text-center">
+          <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-slate-100 text-2xl">🏫</div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-800">스쿨스페이스</h1>
           <p className="text-slate-500 text-sm mt-1.5">
             {isSignUp ? '새 계정을 만들고 스터디룸을 예약해보세요' : '계정에 로그인하고 공간 현황을 확인해보세요'}
           </p>
         </div>
 
-        <div className="relative flex bg-slate-100/80 rounded-xl p-1 mb-4 overflow-hidden select-none">
+        <div className="relative mb-5 flex select-none overflow-hidden rounded-lg bg-slate-100 p-1">
           <span
             aria-hidden="true"
             className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-white shadow-sm transition-transform duration-300 ease-out ${
@@ -140,10 +138,10 @@ function LoginPage() {
           <button
             type="button"
             onClick={() => switchMode(false)}
-            className={`relative z-10 flex-1 py-2 text-sm font-semibold rounded-lg transition-colors duration-200 cursor-pointer ${
+            className={`relative z-10 min-h-10 flex-1 rounded-md py-2 text-sm font-semibold transition-colors duration-200 cursor-pointer ${
               !isSignUp
                 ? 'text-slate-800'
-                : 'text-slate-500 hover:text-slate-700 hover:bg-white/70'
+                : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             로그인
@@ -151,27 +149,36 @@ function LoginPage() {
           <button
             type="button"
             onClick={() => switchMode(true)}
-            className={`relative z-10 flex-1 py-2 text-sm font-semibold rounded-lg transition-colors duration-200 cursor-pointer ${
+            className={`relative z-10 min-h-10 flex-1 rounded-md py-2 text-sm font-semibold transition-colors duration-200 cursor-pointer ${
               isSignUp
                 ? 'text-slate-800'
-                : 'text-slate-500 hover:text-slate-700 hover:bg-white/70'
+                : 'text-slate-500 hover:text-slate-700'
             }`}
           >
             회원가입
           </button>
         </div>
 
-        <form className="flex flex-col gap-3">
+        <form className="flex flex-col gap-4">
           {isSignUp && (
-            <input type="text" placeholder="이름" value={name}
-              onChange={(e) => setName(e.target.value)} className={inputClass} />
+            <label className="block space-y-1.5 text-sm font-medium text-slate-700">
+              이름
+              <input type="text" autoComplete="name" placeholder="이름을 입력해주세요" value={name}
+                onChange={(e) => setName(e.target.value)} className={inputClass} />
+            </label>
           )}
-          <input type="email" placeholder="이메일" value={email}
-            onChange={(e) => setEmail(e.target.value)} className={inputClass} />
-          <div className="relative">
-            <input type={showPassword ? 'text' : 'password'} placeholder={isSignUp ? '비밀번호 (6자리 이상)' : '비밀번호'} value={password}
+          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
+            이메일
+            <input type="email" autoComplete="email" placeholder="이메일 주소를 입력해주세요" value={email}
+              onChange={(e) => setEmail(e.target.value)} className={inputClass} />
+          </label>
+          <label className="block space-y-1.5 text-sm font-medium text-slate-700">
+            비밀번호
+            <span className="relative block">
+            <input type={showPassword ? 'text' : 'password'} autoComplete={isSignUp ? 'new-password' : 'current-password'} placeholder={isSignUp ? '6자리 이상 입력해주세요' : '비밀번호를 입력해주세요'} value={password}
               onChange={(e) => setPassword(e.target.value)} className={inputClass + ' pr-11'} />
             <button type="button" onClick={() => setShowPassword(!showPassword)}
+              aria-label={showPassword ? '비밀번호 숨기기' : '비밀번호 보기'}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
               {showPassword ? (
                 // 눈 감기 아이콘
@@ -186,32 +193,39 @@ function LoginPage() {
                 </svg>
               )}
             </button>
-          </div>
+            </span>
+          </label>
           {isSignUp && (
-            <div className="flex gap-2">
-              <select value={grade} onChange={(e) => setGrade(e.target.value)} className={selectClass}>
-                <option value="">학년 선택</option>
-                <option value="1">1학년</option>
-                <option value="2">2학년</option>
-                <option value="3">3학년</option>
-              </select>
-              <select value={classNum} onChange={(e) => setClassNum(e.target.value)} className={selectClass}>
-                <option value="">반 선택</option>
-                {[1,2,3,4,5,6,7,8,9,10].map(n => (
-                  <option key={n} value={n}>{n}반</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="space-y-1.5 text-sm font-medium text-slate-700">
+                학년
+                <select value={grade} onChange={(e) => setGrade(e.target.value)} className={selectClass}>
+                  <option value="">학년 선택</option>
+                  <option value="1">1학년</option>
+                  <option value="2">2학년</option>
+                  <option value="3">3학년</option>
+                </select>
+              </label>
+              <label className="space-y-1.5 text-sm font-medium text-slate-700">
+                반
+                <select value={classNum} onChange={(e) => setClassNum(e.target.value)} className={selectClass}>
+                  <option value="">반 선택</option>
+                  {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                    <option key={n} value={n}>{n}반</option>
+                  ))}
+                </select>
+              </label>
             </div>
           )}
           {errorMsg && (
-            <p className={`text-sm px-3 py-2.5 rounded-xl border ${errorMsg.startsWith('✅') ? 'text-blue-700 bg-blue-50 border-blue-100' : 'text-red-600 bg-red-50 border-red-100'}`}>
+            <p role="status" className={`text-sm px-3 py-2.5 rounded-lg border ${isSuccessMessage ? 'text-green-800 bg-green-50 border-green-200' : 'text-red-700 bg-red-50 border-red-200'}`}>
               {errorMsg}
             </p>
           )}
           {isSignUp ? (
             <>
               <button onClick={handleSignUp} disabled={loading || !signUpReady}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 mt-1 shadow-[0_10px_22px_rgba(37,99,235,0.24)]">
+                className="mt-1 min-h-12 w-full rounded-lg bg-slate-700 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? '처리 중...' : '회원가입 완료'}
               </button>
               {canResendVerification && (
@@ -219,7 +233,7 @@ function LoginPage() {
                   type="button"
                   onClick={handleResendVerification}
                   disabled={loading || !isValidEmail}
-                  className="w-full py-2.5 text-sm text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors disabled:opacity-50"
+                  className="min-h-11 w-full rounded-lg border border-slate-200 bg-white py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   인증메일 다시 보내기
                 </button>
@@ -228,14 +242,14 @@ function LoginPage() {
           ) : (
             <>
               <button onClick={handleLogin} disabled={loading || !loginReady}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-colors disabled:opacity-50 mt-1 shadow-[0_10px_22px_rgba(37,99,235,0.24)]">
+                className="mt-1 min-h-12 w-full rounded-lg bg-slate-700 py-3 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                 {loading ? '처리 중...' : '로그인'}
               </button>
             </>
           )}
         </form>
       </div>
-    </div>
+    </main>
   )
 }
 
