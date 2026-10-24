@@ -1,133 +1,124 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ArrowUpRight, Building2, CalendarDays, CircleCheck, CircleDot, Clock3 } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 import { fetchRoomsWithSource } from '../api/rooms'
 import { backendProvider } from '../config/backend'
 import { getRoomCode } from '../lib/roomName'
 
 const STATUS_CONFIG = {
-  available: {
-    label: '공실',
-    icon: '🟢',
-    borderColor: 'border-t-green-500',
-    badgeBg: 'bg-green-100 text-green-700',
-  },
-  occupied: {
-    label: '사용 중',
-    icon: '🔴',
-    borderColor: 'border-t-red-500',
-    badgeBg: 'bg-red-100 text-red-700',
-  },
-  cleaning: {
-    label: '청소 중',
-    icon: '🟡',
-    borderColor: 'border-t-yellow-400',
-    badgeBg: 'bg-yellow-100 text-yellow-700',
-  },
+  available: { label: '공실', Icon: CircleCheck, className: 'room-status-available' },
+  occupied: { label: '사용 중', Icon: CircleDot, className: 'room-status-occupied' },
+  cleaning: { label: '청소 중', Icon: Clock3, className: 'room-status-cleaning' },
 }
 
 function HomePage() {
   const [rooms, setRooms] = useState([])
-  const [sourceInfo, setSourceInfo] = useState({ source: '', fallbackReason: null })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const navigate = useNavigate()
-  const roomStatusCards = useMemo(() => {
-    const sorted = [...rooms].sort((a, b) => {
-      const codeA = getRoomCode(a?.name) || ''
-      const codeB = getRoomCode(b?.name) || ''
-      return codeA.localeCompare(codeB)
-    })
 
-    return sorted.map((room) => {
-      const code = getRoomCode(room?.name)
-      const status = STATUS_CONFIG[room?.status] || STATUS_CONFIG.cleaning
-      // 방이 지금 사용 중/청소 중이어도 다른 날짜·시간에는 예약할 수 있어야 하므로
-      // 상태는 표시만 하고, 예약 이동 자체는 항상 허용한다.
-      return {
-        id: room.id,
-        title: code ? `스터디룸 ${code}` : room.name,
-        status,
-        room,
-        isReservable: true,
-      }
-    })
-  }, [rooms])
+  const sortedRooms = useMemo(() => [...rooms].sort((a, b) => {
+    const codeA = getRoomCode(a?.name) || ''
+    const codeB = getRoomCode(b?.name) || ''
+    return codeA.localeCompare(codeB)
+  }), [rooms])
+
+  const roomCounts = useMemo(() => rooms.reduce((counts, room) => {
+    if (room.status in counts) counts[room.status] += 1
+    return counts
+  }, { available: 0, occupied: 0, cleaning: 0 }), [rooms])
 
   useEffect(() => {
-    async function fetchRooms() {
+    let active = true
+    async function loadRooms() {
       try {
-        const { rooms: fetchedRooms, source, fallbackReason } = await fetchRoomsWithSource()
-        setRooms(fetchedRooms)
-        setSourceInfo({ source, fallbackReason })
-      } catch (error) {
-        console.error('방 데이터를 불러오지 못했어요:', error)
+        const { rooms: fetchedRooms } = await fetchRoomsWithSource()
+        if (active) { setRooms(fetchedRooms); setError('') }
+      } catch (loadError) {
+        console.error('방 데이터를 불러오지 못했어요:', loadError)
+        if (active) setError('스터디룸 정보를 불러오지 못했어요. 잠시 후 다시 시도해주세요.')
+      } finally {
+        if (active) setLoading(false)
       }
     }
-    fetchRooms()
+    loadRooms()
 
-    if (backendProvider !== 'supabase') {
-      return undefined
-    }
+    if (backendProvider !== 'supabase') return () => { active = false }
 
-    // 실시간으로 방 상태 변경 감지 (Supabase 모드일 때만 사용)
     const channel = supabase
       .channel('rooms-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, () => {
-        fetchRooms()
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, loadRooms)
       .subscribe()
 
-    return () => supabase.removeChannel(channel)
+    return () => { active = false; supabase.removeChannel(channel) }
   }, [])
 
-  return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      {/* 페이지 제목 영역 */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-800">공간 현황</h1>
-        <p className="text-slate-500 mt-1 text-sm">공실인 방을 클릭하면 바로 예약할 수 있어요</p>
-        {sourceInfo.source === 'azure' && (
-          <p className="mt-2 text-xs text-blue-600 font-medium">현재 Azure API(데이터를 가져오는 통로)로 방 정보를 불러오고 있어요.</p>
-        )}
-        {sourceInfo.source === 'supabase' && (
-          <p className="mt-2 text-xs text-slate-600 font-medium">현재 Supabase(기존 데이터 저장소)에서 방 정보를 불러오고 있어요.</p>
-        )}
-        {sourceInfo.source === 'supabase-fallback' && (
-          <p className="mt-2 text-xs text-amber-600 font-medium">
-            Azure API 연결이 실패해서 Supabase로 자동 전환했어요.
-            {sourceInfo.fallbackReason ? ` (${sourceInfo.fallbackReason})` : ''}
-          </p>
-        )}
-        {sourceInfo.source === 'supabase-no-azure-url' && (
-          <p className="mt-2 text-xs text-amber-600 font-medium">
-            Azure 주소 설정이 없어서 Supabase를 사용 중이에요.
-            {' '}VITE_AZURE_API_BASE_URL(Azure API 주소 설정값)을 .env.local에 넣으면 Azure 연결을 시도해요.
-          </p>
-        )}
-      </div>
+  const summaries = [
+    { label: '전체 스터디룸', value: rooms.length, Icon: Building2, tone: 'summary-neutral' },
+    { label: '공실', value: roomCounts.available, Icon: CircleCheck, tone: 'summary-available' },
+    { label: '사용 중', value: roomCounts.occupied, Icon: CircleDot, tone: 'summary-occupied' },
+    { label: '청소 중', value: roomCounts.cleaning, Icon: Clock3, tone: 'summary-cleaning' },
+  ]
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-        {roomStatusCards.map((room) => (
-          <button
-            key={room.id}
-            type="button"
-            disabled={!room.isReservable}
-            onClick={() => navigate('/reservation', { state: { room: room.room } })}
-            className={`text-left rounded-2xl border bg-white border-t-8 ${room.status.borderColor} p-6 min-h-[180px] shadow-sm transition ${
-              room.isReservable
-                ? 'hover:shadow-md hover:-translate-y-0.5 cursor-pointer'
-                : 'opacity-90 cursor-not-allowed'
-            }`}
-          >
-            <p className="text-xl font-bold text-slate-800">{room.title}</p>
-            <p className={`inline-flex mt-3 text-sm font-semibold px-3 py-1.5 rounded-full ${room.status.badgeBg}`}>
-              {room.status.icon} {room.status.label}
-            </p>
-            <p className="mt-5 text-sm text-slate-500">
-              클릭하면 예약 창으로 이동해요. (지금 상태는 참고용이에요)
-            </p>
-          </button>
-        ))}
-      </div>
+  return (
+      <div className="dashboard-layout">
+      <section className="dashboard-main">
+        <header className="dashboard-heading">
+          <div>
+            <p className="dashboard-eyebrow">SCHOOL SPACE</p>
+            <h1>공간 현황</h1>
+            <p className="dashboard-description">스터디룸 상태를 확인하고 필요한 공간을 예약해보세요.</p>
+          </div>
+          <div className="dashboard-date"><CalendarDays size={16} /><span>실시간 현황</span></div>
+        </header>
+
+        <section className="summary-grid" aria-label="스터디룸 현황 요약">
+          {summaries.map(({ label, value, Icon, tone }) => (
+            <article className="summary-card" key={label}>
+              <span className={`summary-icon ${tone}`}><Icon size={19} strokeWidth={1.8} /></span>
+              <div><p>{label}</p><strong>{value}<small>개</small></strong></div>
+            </article>
+          ))}
+        </section>
+
+        <section className="room-section">
+          <div className="section-heading">
+            <div><h2>스터디룸</h2><p>방을 선택하면 예약 신청으로 이동해요.</p></div>
+            <span className="room-count">{rooms.length}개 공간</span>
+          </div>
+
+          {loading ? (
+            <div className="dashboard-state"><span className="state-spinner" />스터디룸을 불러오고 있어요.</div>
+          ) : error ? (
+            <div className="dashboard-state dashboard-state-error">{error}</div>
+          ) : sortedRooms.length === 0 ? (
+            <div className="dashboard-state">표시할 스터디룸이 없어요.</div>
+          ) : (
+            <div className="room-grid">
+              {sortedRooms.map((room) => {
+                const status = STATUS_CONFIG[room?.status] || STATUS_CONFIG.cleaning
+                const { Icon } = status
+                const title = getRoomCode(room?.name) ? `스터디룸 ${getRoomCode(room.name)}` : room.name
+                return (
+                  <article className="room-card" key={room.id}>
+                    <div className="room-card-top">
+                      <span className="room-icon"><Building2 size={21} strokeWidth={1.7} /></span>
+                      <span className={`room-status ${status.className}`}><Icon size={14} strokeWidth={2} />{status.label}</span>
+                    </div>
+                    <h3>{title}</h3>
+                    <p className="room-card-hint">예약 일정과 이용 목적을 입력할 수 있어요.</p>
+                    <button type="button" onClick={() => navigate('/reservation', { state: { room } })} className="room-reserve-button">
+                      예약 신청 <ArrowUpRight size={16} />
+                    </button>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </section>
+
     </div>
   )
 }

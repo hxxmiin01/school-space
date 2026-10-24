@@ -41,7 +41,6 @@ function MyPage() {
   const [userName, setUserName] = useState('')
   const [editingClass, setEditingClass] = useState(false)
   const [currentTime, setCurrentTime] = useState(new Date())
-  const [reservationSourceInfo, setReservationSourceInfo] = useState({ source: '', fallbackReason: null })
 
   function getSurveyDoneMap() {
     try {
@@ -87,7 +86,6 @@ function MyPage() {
       })
 
       setReservations(mergedReservations)
-      setReservationSourceInfo({ source: resResult?.source || '', fallbackReason: resResult?.fallbackReason || null })
       if (!penResult.error) setPenalties(penResult.data)
       if (!profileResult.error) {
         setClassName(profileResult.data?.class_name || '')
@@ -226,24 +224,6 @@ function MyPage() {
       {/* 예약 내역 */}
       <div className="pt-2">
         <h2 className="font-bold text-slate-800 mb-5">내 예약 내역</h2>
-        {reservationSourceInfo.source === 'azure' && (
-          <p className="mb-3 text-xs text-blue-600 font-medium">예약 목록은 Azure API(데이터 통로)에서 불러오고 있어요.</p>
-        )}
-        {reservationSourceInfo.source === 'supabase' && (
-          <p className="mb-3 text-xs text-slate-600 font-medium">예약 목록은 Supabase(기존 저장소)에서 불러오고 있어요.</p>
-        )}
-        {reservationSourceInfo.source === 'supabase-fallback' && (
-          <p className="mb-3 text-xs text-amber-600 font-medium">
-            Azure 예약 API 연결이 실패해서 Supabase로 자동 전환했어요.
-            {reservationSourceInfo.fallbackReason ? ` (${reservationSourceInfo.fallbackReason})` : ''}
-          </p>
-        )}
-        {reservationSourceInfo.source === 'supabase-no-azure-url' && (
-          <p className="mb-3 text-xs text-amber-600 font-medium">
-            Azure 주소 설정이 없어서 Supabase를 사용 중이에요.
-            {' '}VITE_AZURE_API_BASE_URL(Azure API 주소 설정값)을 .env.local에 넣으면 Azure 연결을 시도해요.
-          </p>
-        )}
         {reservations.length === 0 ? (
           <div className="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">
             예약 내역이 없어요.
