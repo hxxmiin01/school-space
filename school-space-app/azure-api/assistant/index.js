@@ -80,16 +80,11 @@ module.exports = async function (context, req) {
     const supabaseUrl = process.env.SUPABASE_URL
     const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
     if (!supabaseUrl || !supabaseServiceRoleKey || !userId) {
-      return []
+      return null
     }
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const todayText = today.toISOString().slice(0, 10)
-    const latestDate = new Date(today)
-    latestDate.setDate(latestDate.getDate() + 7)
-    const latestDateText = latestDate.toISOString().slice(0, 10)
-    const url = `${supabaseUrl}/rest/v1/reservations?select=room_id,date,start_time,end_time,status&user_id=eq.${encodeURIComponent(userId)}&date=gte.${todayText}&date=lte.${latestDateText}&status=neq.rejected&order=date.asc,start_time.asc`
+    const todayText = toKoreaDateText()
+    const url = `${supabaseUrl}/rest/v1/reservations?select=room_id,date,start_time,end_time,status,members_count,purpose&user_id=eq.${encodeURIComponent(userId)}&date=gte.${todayText}&order=date.asc,start_time.asc`
     const response = await fetch(url, {
       headers: {
         apikey: supabaseServiceRoleKey,
@@ -101,7 +96,10 @@ module.exports = async function (context, req) {
       throw new Error(`Supabase 예약 조회 실패: ${response.status}`)
     }
 
-    return response.json()
+    const reservations = await response.json()
+    return reservations.filter((reservation) =>
+      typeof reservation.date === 'string' && reservation.date >= todayText
+    )
   }
 
   async function fetchRoomStatus() {
@@ -193,15 +191,48 @@ module.exports = async function (context, req) {
 
   try {
     let reservationContext = ''
+    let userReservations = null
     try {
       const reservations = await fetchUserReservations()
-      if (reservations.length > 0) {
-        reservationContext = `\n사용자의 예정 예약 데이터(Supabase):\n${reservations
-          .map((reservation) => `- 방 ${reservation.room_id} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | 상태: ${reservation.status}`)
+      userReservations = reservations
+      if (reservations === null) {
+        reservationContext = '\n사용자의 오늘 이후 예약(Supabase): 조회 불가 (로그인 사용자 또는 서버 DB 설정 확인 필요). 예약 정보를 추측하거나 추가 식별 정보를 묻지 않는다.\n'
+      } else if (reservations.length === 0) {
+        reservationContext = '\n사용자의 오늘 이후 예약(Supabase): 예약 기록 없음\n'
+      } else {
+        reservationContext = `\n사용자의 오늘 이후 예약(Supabase):\n${reservations
+          .map((reservation) => `- 방 ${reservation.room_id} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | 상태: ${reservation.status} | 인원: ${reservation.members_count ?? '정보 없음'} | 목적: ${reservation.purpose || '정보 없음'}`)
           .join('\n')}\n`
       }
     } catch (error) {
+      reservationContext = '\n사용자의 오늘 이후 예약(Supabase): 조회 실패. 예약 정보를 추측하거나 추가 식별 정보를 묻지 말고 현재 조회할 수 없다고 안내한다.\n'
       console.warn('AI 도우미가 Supabase 예약 데이터를 읽지 못했어요.', error.message)
+    }
+
+    const isReservationListQuestion = /(?:내|제|나의)\s*예약\s*(?:내역|목록|상태|현황)|남은\s*예약/i.test(message)
+    if (isReservationListQuestion) {
+      const roomNames = { 1: 'A룸', 2: 'B룸', 3: 'C룸', 4: 'D룸' }
+      const statusLabels = {
+        pending: '승인 대기',
+        approved: '승인됨',
+        rejected: '거부됨',
+        checked_in: '이용 중',
+        completed: '이용 완료',
+      }
+      const reply = userReservations === null
+        ? '오늘 이후 예약을 조회하지 못했어요. 로그인 상태와 서버 DB 설정을 확인한 뒤 다시 시도해 주세요.'
+        : userReservations.length === 0
+          ? '오늘 이후 예정된 예약이 없어요.'
+          : `오늘 이후 예약 내역이에요:\n${userReservations
+            .map((reservation) => `- ${roomNames[reservation.room_id] || `방 ${reservation.room_id}`} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | ${statusLabels[reservation.status] || reservation.status}`)
+            .join('\n')}`
+
+      context.res = {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: { reply },
+      }
+      return
     }
 
     let roomStatusContext = ''
@@ -335,6 +366,13 @@ module.exports = async function (context, req) {
 - 모든 정보가 모이기 전에는 예약 JSON을 만들지 않는다.
 - 모든 정보가 모이면 예약 요약을 한 번만 보여주고 "예"라고 답했을 때만 예약 JSON을 만든다.
 
+내 예약 조회 규칙:
+- 사용자가 본인의 예약 내역이나 예약 상태를 물으면 아래의 실제 Supabase 오늘 이후 예약을 목록으로 바로 보여준다.
+- 조회 범위는 한국 시간 기준 오늘부터 미래 전체이며, 7일 상한은 없다. 과거 예약은 목록에서 제외한다.
+- 목록에는 방, 날짜, 시간, 승인 상태를 포함하고 데이터가 있으면 인원과 사용 목적도 함께 알려준다.
+- 본인 확인에는 이미 전달된 사용자 ID를 사용하므로 방 이름, 날짜, 시간 등 추가 식별 정보를 다시 요구하지 않는다.
+- 데이터가 예약 기록 없음으로 표시되면 기록이 없다고 답한다. 조회 불가로 표시되면 현재 조회할 수 없다고 분명히 말하고 예약 내용을 추측하지 않는다.
+
 예약 처리:
 1. 정보가 불충분하면 친절하게 물어본다
 2. 정보가 완전하면 다음 JSON으로 응답한다 (다른 텍스트 없이 JSON만):
@@ -342,13 +380,13 @@ module.exports = async function (context, req) {
      "action": "make_reservation",
      "date": "YYYY-MM-DD",
      "start_time": "HH:00",
-     "end_time": "HH:00",
-     "members_count": 숫자,
-     "purpose": "사용 목적",
+    "end_time": "HH:00",
+    "members_count": 숫자,
+    "purpose": "사용 목적",
      "room_id": "study-room-1"
    }
 3. JSON 응답이 아닌 경우는 일반 한국어로 답변한다
-4. 예약 완료 후 확인 메시지를 친절하게 전달한다
+  4. 예약 완료 후 확인 메시지를 친절하게 전달한다
 
 추가 규칙:
 - ${reservationStateHint || '현재 예약 단계를 대화 이력으로 추론하고, 이미 받은 정보는 다시 묻지 않는다.'}

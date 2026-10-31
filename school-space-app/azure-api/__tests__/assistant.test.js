@@ -146,47 +146,67 @@ describe('Assistant API (Foundry)', () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
-  test('should include the user reservations read from Supabase in the Foundry prompt', async () => {
+  test('should include future reservations without a one-week limit', async () => {
     process.env.SUPABASE_URL = 'https://example.supabase.co'
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-test-key'
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const tomorrow = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const beyondOneWeek = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 
-    global.fetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ([
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([
+          {
+            room_id: 3,
+            date: yesterday,
+            start_time: '09:00',
+            end_time: '10:00',
+            status: 'completed',
+            members_count: 2,
+            purpose: '지난 예약',
+          },
           {
             room_id: 2,
-            date: '2026-09-06',
+            date: beyondOneWeek,
             start_time: '10:00',
             end_time: '11:00',
-            status: 'approved',
+            status: 'rejected',
+            members_count: 3,
+            purpose: '조별 과제',
           },
-        ]),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          output: [{ content: [{ text: '예약 내역을 확인했어요.' }] }],
-        }),
-      })
+          {
+            room_id: 1,
+            date: tomorrow,
+            start_time: '13:00',
+            end_time: '14:00',
+            status: 'pending',
+            members_count: 2,
+            purpose: '발표 준비',
+          },
+      ]),
+    })
 
     await assistantFunction(context, {
       body: {
-        message: '내 예약 상태를 알려줘',
+        message: '내 예약 내역을 전부 알려줘',
         userId: 'user-123',
-        history: [],
+        history: [{ role: 'assistant', text: `지난 예약: C룸 | ${yesterday} 09:00~10:00` }],
       },
     })
 
     const supabaseCall = global.fetch.mock.calls[0]
     expect(supabaseCall[0]).toContain('https://example.supabase.co/rest/v1/reservations')
     expect(supabaseCall[0]).toContain('user_id=eq.user-123')
-    expect(supabaseCall[0]).toMatch(/date=gte\.\d{4}-\d{2}-\d{2}&date=lte\.\d{4}-\d{2}-\d{2}/)
+    expect(supabaseCall[0]).toMatch(/date=gte\.\d{4}-\d{2}-\d{2}/)
+    expect(supabaseCall[0]).not.toContain('date=lte.')
+    expect(supabaseCall[0]).not.toContain('status=neq.rejected')
     expect(supabaseCall[1].headers.Authorization).toBe('Bearer service-role-test-key')
-
-    const foundryBody = JSON.parse(global.fetch.mock.calls[1][1].body)
-    expect(foundryBody.input).toContain('사용자의 예정 예약 데이터(Supabase)')
-    expect(foundryBody.input).toContain('방 2 | 2026-09-06 10:00~11:00')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain(`B룸 | ${beyondOneWeek} 10:00~11:00 | 거부됨`)
+    expect(context.res.body.reply).toContain(`A룸 | ${tomorrow} 13:00~14:00 | 승인 대기`)
+    expect(context.res.body.reply).not.toContain(yesterday)
+    expect(context.res.body.reply).not.toContain('지난 예약')
   })
 
   test('should include room status when the user asks about vacancies', async () => {

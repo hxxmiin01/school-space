@@ -12,7 +12,6 @@ import { askAssistant } from '../api/assistant'
  */
 
 const QUICK_QUESTIONS = [
-  '지금 예약 가능한 방이 있나요?',
   '내 예약 상태를 알려줘',
   '우리 반 패널티 점수가 궁금해요',
 ]
