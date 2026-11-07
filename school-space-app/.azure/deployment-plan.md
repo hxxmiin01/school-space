@@ -1,6 +1,6 @@
 # Azure Deployment Plan — school-space-app
 
-**Status:** Validated (Deployed)
+**Status:** Validated
 
 ---
 
@@ -57,42 +57,36 @@
 
 ## Validation Checklist (AZCLI)
 
-- [x] 1. Azure CLI Installation (`az version`)
-- [x] 2. Authentication (`az account show`)
-- [x] 3. Build Verification (`npm run build`)
-- [x] 4. Azure Resource Validation (RG/SWA 존재 확인)
-- [x] 5. Static Role Verification (RBAC 코드 검토 결과 기록)
+All validation checks pass
+
+- [x] Azure CLI is installed and authenticated to the confirmed subscription.
+- [x] The React/Vite production build completes successfully.
+- [x] The existing resource group and Azure Static Web App are available.
+- [x] The deployed site responds successfully over HTTPS.
+- [x] Static role verification is reviewed; no additional RBAC assignment is required for this static-site deployment.
 
 ---
 
 ## Section 7: Validation Proof
 
-검증 시각(로컬): 2026-07-18 11:13 KST
+검증 시각(현지): 2026-10-24 11:12 KST
 
-1. Azure CLI 설치 확인
-   - 명령: `az version --output json`
-   - 결과: 성공 (azure-cli 2.87.0)
+1. Azure CLI 설치 및 인증 확인
+   - 명령: `az version --output json`, `az account show --query "{id:id,name:name,state:state}" --output json`
+   - 결과: 성공 (Azure CLI 2.87.0, 활성 구독 `0abaecf7-4338-45d6-a39f-c5bebf6c286f`; 구독 이름은 Azure 구독 목록에서 확인)
 
-2. 인증 확인
-   - 명령: `az account show --output json`
-   - 결과: 성공 (subscription: `0abaecf7-4338-45d6-a39f-c5bebf6c286f`)
-
-3. 빌드 검증
+2. 앱 빌드 확인
    - 명령: `npm run build`
-   - 결과: 성공 (`dist/` 생성)
+   - 결과: 성공 (Vite 프로덕션 빌드, `dist/` 생성)
 
-4. 리소스 존재 검증
+3. Azure 리소스 확인
    - 명령: `az group show --name school-space-rg`, `az staticwebapp show --name school-space-app --resource-group school-space-rg`
-   - 결과: 성공 (호스트: `mango-pebble-0d76ff000.7.azurestaticapps.net`)
+   - 결과: 성공 (리소스 그룹 위치: koreacentral, Static Web App 호스트: `mango-pebble-0d76ff000.7.azurestaticapps.net`, 앱 위치: East Asia)
 
-5. 배포 실행
-   - 명령: `npx @azure/static-web-apps-cli deploy ./dist --deployment-token <token> --env production`
-   - 결과: 성공
+4. 기존 사이트 HTTPS 응답 확인
+   - 명령: `curl.exe --head --location https://mango-pebble-0d76ff000.7.azurestaticapps.net/`, `curl.exe --location https://mango-pebble-0d76ff000.7.azurestaticapps.net/`
+   - 결과: 두 요청 모두 HTTP 200
 
-6. 엔드포인트 확인
-   - 명령: `curl -I https://mango-pebble-0d76ff000.7.azurestaticapps.net`
-   - 결과: 성공 (HTTP 200 OK)
-
-7. Live Role Verification
-   - 명령: `az role assignment list --scope <static-web-app-resource-id>`
-   - 결과: `[]` (추가 RBAC 할당 없음, 현재 구성에서 문제 없음)
+5. Static Web App RBAC 확인
+   - 명령: Azure role assignment list at `/subscriptions/0abaecf7-4338-45d6-a39f-c5bebf6c286f/resourceGroups/school-space-rg/providers/Microsoft.Web/staticSites/school-space-app`
+   - 결과: 성공 (`assignments: []`; 정적 사이트 배포에 별도 역할 할당 없음)
