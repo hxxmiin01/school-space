@@ -5,6 +5,7 @@
 			"type": "func",
 			"label": "func: host start",
 			"command": "host start",
+			"args": ["--cors", "http://127.0.0.1:5173"],
 			"problemMatcher": "$func-node-watch",
 			"isBackground": true,
 			"dependsOn": "npm install (functions)",

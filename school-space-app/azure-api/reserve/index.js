@@ -1,5 +1,20 @@
 const { Client } = require('pg')
 
+function normalizeRoomId(roomId) {
+  if (Number.isInteger(roomId) && roomId >= 1 && roomId <= 4) {
+    return roomId
+  }
+
+  if (typeof roomId === 'string') {
+    const match = roomId.trim().match(/^(?:study-room-)?([1-4])$/i)
+    if (match) {
+      return Number(match[1])
+    }
+  }
+
+  return null
+}
+
 function getSupabaseConfig() {
   const url = process.env.SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -132,7 +147,8 @@ function createClient() {
 
 module.exports = async function (context, req) {
   let client = null
-  const { roomId, date, startTime, endTime, membersCount, purpose, userId } = req.body || {}
+  const { date, startTime, endTime, membersCount, purpose, userId } = req.body || {}
+  const roomId = normalizeRoomId(req.body?.roomId)
 
   // 파라미터 검증
   if (!roomId || !date || !startTime || !endTime || !membersCount || !purpose || !userId) {
@@ -290,6 +306,8 @@ module.exports = async function (context, req) {
       body: { error: error.message },
     }
   } finally {
-    await client.end()
+    if (client) {
+      await client.end()
+    }
   }
 }

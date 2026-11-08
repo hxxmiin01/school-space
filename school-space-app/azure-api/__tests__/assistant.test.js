@@ -235,8 +235,57 @@ describe('Assistant API (Foundry)', () => {
     )
     const foundryBody = JSON.parse(global.fetch.mock.calls[1][1].body)
     expect(foundryBody.input).toContain('현재 스터디룸 상태 데이터')
-    expect(foundryBody.input).toContain('study-room-1: available')
-    expect(foundryBody.input).toContain('study-room-2: occupied')
+    expect(foundryBody.input).toContain('스터디룸 A: available')
+    expect(foundryBody.input).toContain('스터디룸 B: occupied')
+  })
+
+  test.each([
+    ['A', 'A', 1], ['a', 'A', 1],
+    ['B', 'B', 2], ['b', 'B', 2],
+    ['C', 'C', 3], ['c', 'C', 3],
+    ['D', 'D', 4], ['d', 'D', 4],
+  ])('should map room answer %s to the corresponding room', async (answer, roomCode, roomId) => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ output: [{ content: [{ text: '예약할 날짜를 알려주세요.' }] }] }),
+    })
+
+    await assistantFunction(context, {
+      body: {
+        message: answer,
+        history: [
+          { role: 'user', text: '스터디룸을 예약하고 싶어요.' },
+          { role: 'assistant', text: '어느 방을 예약하시겠어요?' },
+        ],
+      },
+    })
+
+    const prompt = JSON.parse(global.fetch.mock.calls[0][1].body).input
+    expect(prompt).toContain(`현재 선택한 방: 스터디룸 ${roomCode} (room_id: ${roomId})`)
+    expect(context.res.body.reply).toBe('예약할 날짜를 알려주세요.')
+  })
+
+  test.each([
+    ['study-room-1', 'A룸'],
+    ['study-room-2', 'B룸'],
+    ['study-room-3', 'C룸'],
+    ['study-room-4', 'D룸'],
+    ['스터디룸 1', 'A룸'],
+    ['1번 방', 'A룸'],
+    ['방 1', 'A룸'],
+    ['1호실', 'A룸'],
+  ])('should display %s as %s in assistant replies', async (internalRoomId, displayName) => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ output: [{ content: [{ text: `${internalRoomId}은 예약 가능한 방이에요.` }] }] }),
+    })
+
+    await assistantFunction(context, {
+      body: { message: '예약 가능한 방이 궁금해요.', history: [] },
+    })
+
+    expect(context.res.body.reply).toContain(displayName)
+    expect(context.res.body.reply).not.toContain('study-room-')
   })
 
   test('should include the user penalties read from Supabase in the Foundry prompt', async () => {
@@ -395,6 +444,71 @@ describe('Assistant API (Foundry)', () => {
 
   // ===== 자동 예약 기능 테스트 =====
 
+  test('should ask for missing member count and purpose instead of calling reserve', async () => {
+    const reservationJson = JSON.stringify({
+      action: 'make_reservation',
+      date: '2026-11-09',
+      start_time: '14:00',
+      end_time: '15:00',
+      room_id: 'study-room-1',
+    })
+
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ output: [{ content: [{ text: reservationJson }] }] }),
+    })
+
+    await assistantFunction(context, {
+      body: {
+        message: '예',
+        history: [
+          { role: 'user', text: '스터디룸 1 예약하고 싶어요.' },
+          { role: 'assistant', text: '예약 정보를 확인해주세요. 예라고 하시면 진행할게요.' },
+        ],
+        userId: 'user-123',
+      },
+    })
+
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain('몇 명이서 사용할 거예요?')
+    expect(context.res.body.reply).toContain('사용 목적')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('should not ask for confirmation before member count and purpose are included', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        output: [{
+          content: [{
+            text: '예약 내용을 정리해드릴게요.\n- 방: study-room-1\n- 날짜: 2026-11-09\n- 시간: 14:00~15:00\n이대로 예약할까요? 예라고 답해주세요.',
+          }],
+        }],
+      }),
+    })
+
+    await assistantFunction(context, {
+      body: {
+        message: '오후 3시까지',
+        history: [
+          { role: 'user', text: '스터디룸 1 예약하고 싶어요.' },
+          { role: 'assistant', text: '예약할 날짜를 알려주세요.' },
+          { role: 'user', text: '내일' },
+          { role: 'assistant', text: '시작 시간을 알려주세요.' },
+          { role: 'user', text: '오후 2시' },
+          { role: 'assistant', text: '몇 시까지 사용하실 건가요?' },
+        ],
+        userId: 'user-123',
+      },
+    })
+
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain('몇 명이서 사용할 거예요?')
+    expect(context.res.body.reply).toContain('사용 목적')
+    expect(context.res.body.reply).not.toContain('예라고 답해주세요')
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
   test('should automatically create reservation when AI returns JSON', async () => {
     // Arrange: AI가 JSON 예약 정보를 반환
     const reservationJson = JSON.stringify({
@@ -507,6 +621,7 @@ describe('Assistant API (Foundry)', () => {
       body: {
         message: '2024년 12월 15일 14시부터 16시까지 예약해줄래?',
         history: [],
+        userId: 'user-123',
       },
     }
 
@@ -517,6 +632,40 @@ describe('Assistant API (Foundry)', () => {
     expect(context.res.status).toBe(200)
     expect(context.res.body.reply).toContain('문제가 발생')
     expect(context.res.body.reply).toContain('시간 충돌')
+  })
+
+  test('should handle an empty non-JSON reservation error response', async () => {
+    const reservationJson = JSON.stringify({
+      action: 'make_reservation',
+      date: '2024-12-15',
+      start_time: '14:00',
+      end_time: '16:00',
+      members_count: 3,
+      purpose: '수학 스터디',
+      room_id: 'study-room-1',
+    })
+
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ output: [{ content: [{ text: reservationJson }] }] }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input')
+        },
+      })
+
+    await assistantFunction(context, {
+      body: { message: '예약해줘', history: [], userId: 'user-123' },
+    })
+
+    expect(context.res.status).toBe(200)
+    expect(context.res.body.reply).toContain('예약 중 문제가 발생')
+    expect(context.res.body.reply).toContain('HTTP 502')
+    expect(context.res.body.reply).not.toContain('Unexpected end of JSON input')
   })
 
   test('should handle network error when calling reserve API', async () => {
@@ -553,6 +702,7 @@ describe('Assistant API (Foundry)', () => {
       body: {
         message: '예약해줄래?',
         history: [],
+        userId: 'user-123',
       },
     }
 
@@ -640,6 +790,7 @@ describe('Assistant API (Foundry)', () => {
       body: {
         message: '예약해줄래?',
         history: [],
+        userId: 'user-123',
       },
     }
 

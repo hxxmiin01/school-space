@@ -5,6 +5,33 @@
  * body:     { message: string, history?: { role: 'user'|'assistant', text: string }[] }
  * response: { reply: string }
  */
+const ROOM_ID_TO_CODE = { 1: 'A', 2: 'B', 3: 'C', 4: 'D' }
+const ROOM_CODE_TO_ID = { A: 1, B: 2, C: 3, D: 4 }
+
+function getRoomCode(value) {
+  const text = String(value ?? '').trim().replace(/(?:룸|방|room)$/i, '').trim()
+  const match = text.match(/^(?:(?:study[\s_-]*room|room|스터디룸|방)\s*[-_]?\s*)?([1-4A-D])$/i)
+  if (!match) return null
+
+  const token = match[1].toUpperCase()
+  return ROOM_ID_TO_CODE[token] || (ROOM_CODE_TO_ID[token] ? token : null)
+}
+
+function formatRoomName(value) {
+  const roomCode = getRoomCode(value)
+  return roomCode ? `스터디룸 ${roomCode}` : '스터디룸'
+}
+
+function formatUserFacingRoomNames(text) {
+  return String(text)
+    .replace(/\bstudy[\s_-]*room[\s_-]*([1-4])\b/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+    .replace(/\broom[\s_-]*([1-4])\b/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+    .replace(/스터디\s*룸[\s_-]*([1-4])/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+    .replace(/([1-4])\s*번\s*(?:스터디\s*)?(?:룸|방)/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+    .replace(/(?:스터디\s*)?(?:룸|방)\s*([1-4])\b/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+    .replace(/([1-4])\s*호실/gi, (_, roomId) => `${ROOM_ID_TO_CODE[roomId]}룸`)
+}
+
 module.exports = async function (context, req) {
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : ''
   const history = Array.isArray(req.body?.history) ? req.body.history : []
@@ -201,7 +228,7 @@ module.exports = async function (context, req) {
         reservationContext = '\n사용자의 오늘 이후 예약(Supabase): 예약 기록 없음\n'
       } else {
         reservationContext = `\n사용자의 오늘 이후 예약(Supabase):\n${reservations
-          .map((reservation) => `- 방 ${reservation.room_id} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | 상태: ${reservation.status} | 인원: ${reservation.members_count ?? '정보 없음'} | 목적: ${reservation.purpose || '정보 없음'}`)
+          .map((reservation) => `- ${formatRoomName(reservation.room_id)} | ${reservation.date} ${reservation.start_time}~${reservation.end_time} | 상태: ${reservation.status} | 인원: ${reservation.members_count ?? '정보 없음'} | 목적: ${reservation.purpose || '정보 없음'}`)
           .join('\n')}\n`
       }
     } catch (error) {
@@ -241,7 +268,7 @@ module.exports = async function (context, req) {
       try {
         const rooms = await fetchRoomStatus()
         roomStatusContext = `\n현재 스터디룸 상태 데이터:\n${rooms
-          .map((room) => `- ${room.name || room.id}: ${room.status || '상태 미상'}`)
+          .map((room) => `- ${formatRoomName(room.name || room.id)}: ${room.status || '상태 미상'}`)
           .join('\n')}\n`
       } catch (error) {
         roomStatusContext = '\n현재 스터디룸 상태를 조회하지 못했으므로 공실 여부를 단정하지 않는다.\n'
@@ -276,7 +303,7 @@ module.exports = async function (context, req) {
     if (availabilityRequest) {
       try {
         const availability = await fetchAvailability(availabilityRequest)
-        availabilityContext = `\n실제 예약 가능 여부 데이터:\n- 방 ID: ${availabilityRequest.roomId}\n- 날짜: ${availabilityRequest.date}\n- 시간: ${availabilityRequest.startTime}~${availabilityRequest.endTime}\n- 예약 가능: ${availability.available ? '가능' : '불가능'}\n- 사유: ${availability.reason || '없음'}\n`
+        availabilityContext = `\n실제 예약 가능 여부 데이터:\n- 방: ${formatRoomName(availabilityRequest.roomId)}\n- 날짜: ${availabilityRequest.date}\n- 시간: ${availabilityRequest.startTime}~${availabilityRequest.endTime}\n- 예약 가능: ${availability.available ? '가능' : '불가능'}\n- 사유: ${availability.reason || '없음'}\n`
       } catch (error) {
         availabilityContext = '\n요청한 날짜와 시간의 예약 가능 여부를 조회하지 못했으므로 가능하다고 단정하지 않는다.\n'
         console.warn('AI 도우미가 예약 가능 여부를 읽지 못했어요.', error.message)
@@ -301,7 +328,7 @@ module.exports = async function (context, req) {
       .map((turn) => turn.text || '')
 
     const lastAssistantMessage = assistantMessages[assistantMessages.length - 1] || ''
-    const awaitingRoom = /어느\s*방을\s*예약하시겠어요|예약할\s*방\s*정보가\s*필요|예약\s*할\s*방이\s*필요/i.test(lastAssistantMessage)
+    const awaitingRoom = /어느\s*방|어떤\s*방|예약할\s*방|방을\s*(?:골라|선택)|룸을\s*(?:골라|선택)/i.test(lastAssistantMessage)
     const awaitingStartTime = /시작\s*시간을\s*알려주세요|현재\s*시각\s*이후의\s*시작\s*시간을\s*입력해주세요/i.test(lastAssistantMessage)
     const awaitingEndTime = /몇\s*시.*까지\s*사용할\s*거예요|종료\s*시간을\s*다시\s*입력해주세요|부터\s*시작하시는군요/i.test(lastAssistantMessage)
     const awaitingMembers = /몇\s*명이서\s*사용할\s*거예요/i.test(lastAssistantMessage)
@@ -310,7 +337,12 @@ module.exports = async function (context, req) {
 
     let reservationStateHint = ''
     if (awaitingRoom) {
-      reservationStateHint = '현재 단계: 방 선택 대기. 이미 받은 시간/인원/목적이 있어도 방 질문만 다시 한다.'
+      const selectedRoomCode = getRoomCode(message)
+      if (selectedRoomCode) {
+        reservationStateHint = `현재 선택한 방: 스터디룸 ${selectedRoomCode} (room_id: ${ROOM_CODE_TO_ID[selectedRoomCode]}). 한 글자 입력도 방 선택으로 인식하고 방을 다시 묻지 않는다. 사용자에게는 A룸~D룸 이름만 사용한다.`
+      } else {
+        reservationStateHint = '현재 단계: 방 선택 대기. A룸, B룸, C룸, D룸 중 하나를 선택한다. 이미 받은 시간/인원/목적이 있어도 아직 선택하지 않은 경우에만 방을 묻는다.'
+      }
     } else if (awaitingStartTime) {
       reservationStateHint = '현재 단계: 시작 시간 대기. 사용자가 단독 시간만 보내면 그 값을 시작 시간으로 받아들인다.'
     } else if (awaitingEndTime) {
@@ -334,7 +366,10 @@ module.exports = async function (context, req) {
 - 친절하고 이해하기 쉬운 한국어로 답변한다
 
 현재 시스템:
-- 학교에 스터디룸 4개가 있다 (study-room-1, study-room-2, study-room-3, study-room-4)
+- 학교에 스터디룸 A, B, C, D가 있다.
+- 사용자가 A/a, A룸, A방, 스터디룸 A 또는 1번 방이라고 하면 같은 방으로 인식한다. B/b~D/d도 같은 규칙을 적용한다.
+- JSON의 room_id는 내부 숫자 ID만 사용한다: A=1, B=2, C=3, D=4. 사용자에게는 내부 ID를 말하지 않는다.
+- 대화와 예약 요약에서는 반드시 A룸, B룸, C룸, D룸으로 표시하고 study-room-N 형식은 절대 보여주지 않는다.
 - 한 번에 1시간 ~ 3시간 단위로 예약 가능하다
 - 예약은 담당자 승인 후 사용 가능하다
 - 예약 가능 시간은 별도 운영 정책을 확인하며, 근거 없이 특정 시간을 고정해서 안내하지 않는다.
@@ -359,12 +394,14 @@ module.exports = async function (context, req) {
 - 이미 받은 정보는 다시 묻지 않는다.
 - 사용자가 "오늘", "내일", "모레", "글피"라고 하면 한국 시간(Asia/Seoul) 기준 실제 날짜로 해석한다.
 - "A룸", "a방", "스터디룸 A", "A"처럼 말해도 같은 방으로 인식한다.
+- 방 선택 질문 뒤에 사용자가 A/a~D/d 한 글자만 보내도 해당 방을 선택한 것으로 처리한다.
 - 사용 목적은 예시 단어로 제한하지 않는다. "발표 준비", "조별과제", "공부"처럼 자유로운 문장을 그대로 받는다.
 - 사용자가 "오후 7시"처럼 단독 시간을 보내면 현재 질문이 시작 시간인지 종료 시간인지 대화 흐름으로 판단한다.
 - 종료 시간을 다시 입력받는 단계에서는 단독 시간을 종료 시간으로 반영하고 같은 질문을 반복하지 않는다.
 - 종료 시간이 시작 시간보다 이르거나 같을 때만 종료 시간 재입력을 요청한다.
 - 모든 정보가 모이기 전에는 예약 JSON을 만들지 않는다.
-- 모든 정보가 모이면 예약 요약을 한 번만 보여주고 "예"라고 답했을 때만 예약 JSON을 만든다.
+- 인원 수와 사용 목적을 포함한 필수 정보가 모두 모이기 전에는 예약 요약이나 확인 질문을 하지 않는다.
+- 모든 정보가 모이면 "인원: 숫자명", "사용 목적: 내용" 형식으로 요약을 한 번만 보여주고 "예"라고 답했을 때만 예약 JSON을 만든다.
 
 내 예약 조회 규칙:
 - 사용자가 본인의 예약 내역이나 예약 상태를 물으면 아래의 실제 Supabase 오늘 이후 예약을 목록으로 바로 보여준다.
@@ -383,7 +420,7 @@ module.exports = async function (context, req) {
     "end_time": "HH:00",
     "members_count": 숫자,
     "purpose": "사용 목적",
-     "room_id": "study-room-1"
+    "room_id": 1
    }
 3. JSON 응답이 아닌 경우는 일반 한국어로 답변한다
   4. 예약 완료 후 확인 메시지를 친절하게 전달한다
@@ -467,9 +504,44 @@ ${reservationContext}${roomStatusContext}${penaltyContext}${availabilityContext}
       // JSON 파싱 실패 - 그냥 일반 텍스트 응답으로 처리
     }
 
+    const isReservationConfirmation = /이대로.{0,15}예약|예약을\s*진행할까요|예.{0,12}답해주세요/i.test(reply)
+    if (!reservationData && isReservationConfirmation) {
+      const missingQuestions = []
+      const hasMemberCount = /(?:\b\d+\s*명\b|(?:인원|몇\s*명)\s*[:：]?\s*\d+)/i.test(reply)
+      const purposeMatch = reply.match(/(?:사용\s*목적|목적)\s*[:：]\s*([^\n]+)/i)
+      const hasPurpose = purposeMatch && !/^(?:미입력|정보\s*없음|없음|미정)\s*$/i.test(purposeMatch[1].trim())
+
+      if (!hasMemberCount) missingQuestions.push('몇 명이서 사용할 거예요?')
+      if (!hasPurpose) missingQuestions.push('사용 목적을 알려주세요.')
+      if (missingQuestions.length > 0) {
+        reply = `예약을 진행하기 전에 ${missingQuestions.join(' ')}`
+      }
+    }
+
     // 예약 JSON이면 실제로 /api/reserve 호출
     if (reservationData) {
-      try {
+      const missingQuestions = []
+      if (!reservationData.room_id) missingQuestions.push('어느 방을 예약하시겠어요?')
+      if (!reservationData.date) missingQuestions.push('예약 날짜를 알려주세요.')
+      if (!reservationData.start_time) missingQuestions.push('시작 시간을 알려주세요.')
+      if (!reservationData.end_time) missingQuestions.push('종료 시간을 알려주세요.')
+
+      const membersCount = Number(reservationData.members_count)
+      if (!Number.isInteger(membersCount) || membersCount < 1) {
+        missingQuestions.push('몇 명이서 사용할 거예요?')
+      } else {
+        reservationData.members_count = membersCount
+      }
+
+      if (typeof reservationData.purpose !== 'string' || !reservationData.purpose.trim()) {
+        missingQuestions.push('사용 목적을 알려주세요.')
+      }
+
+      if (!userId) {
+        reply = '로그인 정보가 확인되지 않아 예약을 진행할 수 없어요. 새로고침 후 로그인 상태를 확인해주세요.'
+      } else if (missingQuestions.length > 0) {
+        reply = `예약을 진행하려면 ${missingQuestions.join(' ')}`
+      } else try {
         // Azure Functions 기본 URL (로컬: localhost:7071, 프로덕션: Azure Functions URL)
         const basePath = getFunctionsBaseUrl()
         const reserveUrl = `${basePath}/api/reserve`
@@ -488,12 +560,16 @@ ${reservationContext}${roomStatusContext}${penaltyContext}${availabilityContext}
           }),
         })
 
+        const reserveResult = await reserveResponse.json().catch(() => null)
         if (reserveResponse.ok) {
-          const reserveResult = await reserveResponse.json()
-          reply = `✅ 예약이 완료되었습니다!\n\n예약 번호: #${reserveResult.reservationId}\n날짜: ${reservationData.date}\n시간: ${reservationData.start_time} ~ ${reservationData.end_time}\n인원: ${reservationData.members_count}명\n\n상태: 담당자 승인 대기 중입니다. 승인 후 입실 버튼이 활성화됩니다.`
+          if (!reserveResult?.reservationId) {
+            reply = '⚠️ 예약 요청은 전달됐지만 확인 응답을 읽지 못했어요. 중복 예약을 피하려면 마이페이지에서 예약 내역을 먼저 확인해 주세요.'
+          } else {
+            reply = `✅ 예약이 완료되었습니다!\n\n예약 번호: #${reserveResult.reservationId}\n방: ${formatRoomName(reservationData.room_id)}\n날짜: ${reservationData.date}\n시간: ${reservationData.start_time} ~ ${reservationData.end_time}\n인원: ${reservationData.members_count}명\n\n상태: 담당자 승인 대기 중입니다. 승인 후 입실 버튼이 활성화됩니다.`
+          }
         } else {
-          const errorData = await reserveResponse.json()
-          reply = `⚠️ 예약 중 문제가 발생했습니다.\n\n이유: ${errorData.error || '알 수 없는 오류'}\n\n다시 시도하거나 담당자에게 문의해주세요.`
+          const errorMessage = reserveResult?.error || `HTTP ${reserveResponse.status}: 서버에서 상세 오류를 보내지 않았어요.`
+          reply = `⚠️ 예약 중 문제가 발생했습니다.\n\n이유: ${errorMessage}\n\n다시 시도하거나 담당자에게 문의해주세요.`
         }
       } catch (reserveError) {
         reply = `❌ 예약 시스템 오류: ${reserveError.message}\n\n잠시 후 다시 시도해주세요.`
@@ -504,7 +580,7 @@ ${reservationContext}${roomStatusContext}${penaltyContext}${availabilityContext}
       status: 200,
       headers: { 'Content-Type': 'application/json' },
       body: {
-        reply: reply.trim(),
+        reply: formatUserFacingRoomNames(reply.trim()),
       },
     }
   } catch (error) {
